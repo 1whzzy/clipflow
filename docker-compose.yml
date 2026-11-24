@@ -1,0 +1,24 @@
+# Local services for the V2.0 workflow. Start with:  docker compose up -d
+# Values come from .env in this folder (git-ignored). See .env.example.
+
+services:
+  postgres:
+    image: postgres:18
+    container_name: clipflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "127.0.0.1:5432:5432"   # this machine only, not the office network
+    volumes:
+      - clipflow-pg:/var/lib/postgresql   # data survives container restarts and upgrades
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  clipflow-pg:

@@ -1,0 +1,72 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	intake(intake)
+	route_mode(route_mode)
+	prepare_script(prepare_script)
+	storyboard(storyboard)
+	match_assets(match_assets)
+	auto_review(auto_review)
+	confirm_plan(confirm_plan)
+	tts(tts)
+	build_timeline(build_timeline)
+	render(render)
+	qc(qc)
+	review_video(review_video)
+	deliver(deliver)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> intake;
+	auto_review -.-> __end__;
+	auto_review -.-> build_timeline;
+	auto_review -.-> confirm_plan;
+	auto_review -.-> match_assets;
+	auto_review -.-> prepare_script;
+	auto_review -.-> slice_front\3a__start__;
+	auto_review -.-> storyboard;
+	build_timeline --> render;
+	confirm_plan -.-> __end__;
+	confirm_plan -.-> auto_review;
+	confirm_plan -.-> build_timeline;
+	confirm_plan -.-> tts;
+	intake --> route_mode;
+	match_assets --> auto_review;
+	prepare_script --> storyboard;
+	qc -.-> build_timeline;
+	qc -.-> review_video;
+	render --> qc;
+	review_video -.-> __end__;
+	review_video -.-> auto_review;
+	review_video -.-> build_timeline;
+	review_video -.-> deliver;
+	route_mode -.-> prepare_script;
+	route_mode -.-> slice_front\3a__start__;
+	slice_front\3a__end__ -.-> __end__;
+	slice_front\3a__end__ -.-> storyboard;
+	storyboard --> match_assets;
+	tts --> build_timeline;
+	deliver --> __end__;
+	subgraph slice_front
+	slice_front\3a__start__(<p>__start__</p>)
+	slice_front\3atranscribe(transcribe)
+	slice_front\3alocate_product(locate_product)
+	slice_front\3arefine_words(refine_words)
+	slice_front\3alook(look)
+	slice_front\3aselect_quotes(select_quotes)
+	slice_front\3a__end__(<p>__end__</p>)
+	slice_front\3a__start__ -.-> slice_front\3aselect_quotes;
+	slice_front\3a__start__ -.-> slice_front\3atranscribe;
+	slice_front\3alocate_product -.-> slice_front\3a__end__;
+	slice_front\3alocate_product -.-> slice_front\3arefine_words;
+	slice_front\3alook --> slice_front\3aselect_quotes;
+	slice_front\3arefine_words --> slice_front\3alook;
+	slice_front\3atranscribe --> slice_front\3alocate_product;
+	slice_front\3aselect_quotes --> slice_front\3a__end__;
+	slice_front\3alocate_product -.-> slice_front\3alocate_product;
+	end
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

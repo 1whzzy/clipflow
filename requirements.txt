@@ -1,0 +1,19 @@
+# Python packages for the pilot. Install with:
+#   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+faster-whisper>=1.2
+nvidia-cublas-cu12      # CUDA libraries for faster-whisper on Windows
+nvidia-cudnn-cu12
+PyYAML>=6.0             # config.yaml
+openai>=3.57            # the agent's LLM calls: the company gateway is OpenAI-compatible
+anthropic>=2.12          # only for check_llm.py (a possible future Claude endpoint)
+openpyxl>=3.1           # reading the Feishu exports (爆款拆解素材库, 优秀切片文案库)
+
+# V2.0 workflow scaffold (clipflow/). Pinned to the versions tested on Python 3.14.
+langgraph==1.2.24
+langchain==1.5.2
+langchain-openai==1.8.5               # agents talk to the OpenAI-compatible gateway
+langgraph-checkpoint-postgres==3.2.1  # saving run progress to Postgres (needs a database, later)
+psycopg[binary,pool]==3.3.9
+pytest==9.2.0
+# langsmith comes in with langchain. Leave LANGSMITH_TRACING unset: tracing would send
+# prompts and product data to an outside service.

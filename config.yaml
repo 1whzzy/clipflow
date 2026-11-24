@@ -1,0 +1,71 @@
+# Pilot configuration. Paths are on this machine; edit to match.
+
+paths:
+  material: D:/work/1/material        # where downloaded material actually lands: <date>/ for replays, <款名>/<颜色>/ for shots
+  footage: D:/work/1/footage          # local copies of shared-drive files (git-ignored)
+  replays: D:/work/1/footage/replays  # livestream replays, <anchor>/<date>.mp4
+  product_shots: D:/work/1/footage/product_shots  # <款名>/<file>.mov
+  published: D:/work/1/footage/published          # finished videos from /1. 抖音/, used as references
+  music: D:/work/1/footage/music      # licensed background music (empty for now)
+  work: D:/work/1/pilot/work          # per-run working folders
+  models: D:/work/1/models            # downloaded Whisper models
+  products: D:/work/1/products        # one <款名>.yaml per product (the workflow input)
+
+asr:
+  model: large-v3      # 'small' is enough for testing
+  device: cuda
+  compute_type: float16
+  language: zh
+
+video:
+  width: 1080
+  height: 1920
+  fps: 30
+  target_seconds: [30, 60]
+  caption_font: Microsoft YaHei
+
+# Editing rules the runner enforces (pilot/scripts/run_job.py). From the review of the first pilot video.
+rules:
+  # The first sentence must make sense on its own: it may not start with one of these.
+  opening_connectives: [而且, 然后, 所以, 但是, 因为, 就是, 还有, 另外, 并且, 包括, 再说, 对, 那, 也是, 它也]
+  # Hesitation and filler: a segment containing these is rejected.
+  hesitations: [那个什么, 怎么说呢, 就是那个, 这个那个, 嗯, 呃, 额, 啊这]
+  # "Look at this" phrases: allowed only when the picture shows the product at that moment.
+  deictic: [你看, 看见了吗, 看到了吗, 给大家看, 看一下, 看这个]
+  # Material / craft claims. A segment may only state one if the product file lists it under
+  # verified_claims (ASR variants included, e.g. 一体机 for a fabric word).
+  claim_terms: [一体织, 一体绒, 一体机, 山羊绒, 羊绒, 羊毛, 纯棉, 真丝, 天丝, 莫代尔, 加绒, 含绒, 成分, 工艺]
+  # Words a caption may never split (product words are added from the product file).
+  protected_terms: [喇叭裤, 微喇, 阔腿裤, 直筒裤, 紧身裤, 打底裤, 显瘦, 不贴腿, 搭鞋, 碳灰色, 炭灰色, 黑色]
+  # Absolute / extreme wording that platforms reject (广告法 极限词). A hit stops the run (hard_fail).
+  banned_words: [最好, 最便宜, 全网最低, 第一, 顶级, 极品, 绝对, 万能, 100%, 史无前例, 国家级]
+  # SOP 2.2.2: one main selling point and at most two supporting ones per video.
+  max_support_points: 2
+  # SOP 2.1.1 and the V1.0 review checklist.
+  max_same_shot_type_in_a_row: 2
+  caption_cue_chars: 16    # one on-screen caption at most (V1.0: 每句 15 字以内); longer lines are split into several
+
+# Selling-point order by category and price band. From the V1.0 workflow design, node 6 (llm_selling_points).
+# Categories without a rule fall back to `其他`. 裤子/休闲裤, 半身裙, 连衣裙, 西装, T恤, 针织衫 still need
+# rules from the editing team (spec 2.1, issue 5); until then they use `其他` and the run is flagged.
+selling_point_priority:
+  毛衣_200以下: [性价比, 面料, 颜色, 版型, 搭配]
+  毛衣_200以上: [面料, 工艺, 颜色, 版型, 搭配]
+  大衣: [颜色, 版型, 工艺, 面料, 搭配]
+  打底: [面料, 百搭, 显瘦, 颜色]
+  马甲: [搭配, 显瘦, 面料, 版型, 搭配]
+  衬衫: [面料, 版型, 痛点, 细节, 搭配]
+  外套: [差异化, 痛点]
+  其他: [百搭, 显瘦]          # V1.0: every video centres on 百搭 and 显瘦
+
+vision:
+  step: 2.0            # seconds between frames looked at in the replay
+  # model: set LLM_VISION_MODEL in .env to use a different model for frames (default: LLM_MODEL)
+
+captions:
+  top_margin: 300      # px from the top when the pants are on screen (captions move off the legs)
+  bottom_margin: 140   # px from the bottom otherwise
+
+end_card:
+  seconds: 3.0         # name / colors / price shown over the last seconds
+  hold: 1.5            # freeze the last frame this long so the card can be read

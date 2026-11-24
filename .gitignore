@@ -1,0 +1,40 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Video and audio: big, kept out of git
+pilot/work/
+renders/
+footage/
+material/
+*.mp4
+*.mov
+*.wav
+*.m4a
+
+# Model cache
+models/
+
+# Secrets: API gateway URL and key
+.env
+read*.txt
+
+# Local Claude settings
+.claude/settings.local.json
+
+# Real business data and company documents stay on this machine
+/products/
+/jobs/
+/LOG.md
+/reports/
+/research_notes/
+/_source/
+项目资料归档/
+/.claude/
+*.docx
+*.pdf
+*.xlsx
+*.png
+!短视频带货剪辑项目业务说明.docx
+!短视频带货剪辑18节点流程图.png
