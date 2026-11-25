@@ -9,9 +9,9 @@ Product information + footage in, a finished vertical selling video out, with tw
 | Slice mode, real | One hour of a real replay of the pilot product (trousers), LLM relay, `clipflow.run` | 1080×1920, 30 fps, −14.1 LUFS MP4, QC passed |
 | Material mode, real | A final script + 35 product shots; Windows' built-in voice standing in for TTS | 18.5 s MP4, −14.5 LUFS, QC passed |
 | HTTP API, real | `clipflow.api` + plain HTTP: submit → plan pause → video pause → MP4 | Works |
-| Every branch, loop, pause and review-gate rule | 70 tests on fakes built from the real run (desensitized) | Pass |
+| Every branch, loop, pause and review-gate rule | 80 tests on fakes built from the real run (desensitized) | Pass |
 | Resume after a failure | Test: a step fails, the cause is fixed, the run continues from that step | Pass |
-| Resume across processes | PostgreSQL 18.7 in Docker. Two separate Python processes ran the project graph with fixture workers and a shared filesystem artifact store. | The first process exited at plan confirmation. The second loaded the same task from PostgreSQL and completed it without re-running ASR. |
+| Resume across processes | PostgreSQL 18.7 in Docker. Separate Python processes exercised the project graph with fixture workers and a shared artifact store. | The second process loaded the same checkpoint and completed the task without repeating ASR. |
 | Lint | `ruff check clipflow tests` | Clean |
 | Speed | Per-step timing in `clipflow.run` | First run on a transcribed replay ~6 min (frame tagging ~2.5, planning ~2.5, word timestamps < 1, render ~10 s); cached re-run < 1 min; a new replay adds ~8 min per hour for transcription |
 | **Not yet** | | Output quality against a golden set (metrics in `clipflow/evaluate.py`, cases not collected yet); the real TTS service; the case library |
@@ -75,9 +75,15 @@ Six agents come from the V2.0 tech plan, chapter 5. Two are new, because a finis
 
 ```
 input contract → prompt (six-part outline, versioned file) + model (answers through one tool = the schema)
-  → Pydantic parse → repair (local fixes) → check (business rules in code)
-  → problems? ask again with the problems listed (≤ 3 attempts) → still failing: AgentFailed
+  → Pydantic parse → repair (local fixes)
+  → check   (integrity: the output is wrong, e.g. a quote not in the transcript, an unknown line number)
+  → quality (rules an editor could accept breaking, e.g. a quote under 1.2 s, a point said three times)
+  → any problem? ask again with all problems listed (≤ 3 attempts)
+  → out of attempts: best attempt without integrity problems → returned, quality problems as warnings
+                     no such attempt                       → AgentFailed
 ```
+
+- **Two kinds of check, so style can't stop a run.** An agent that keeps missing a style rule returns its best usable attempt with warnings, which reach the reviewer as `<node>_warning:…` flags at both pauses. Output that is *wrong* (integrity) is never accepted. Each agent's rules are split this way; for example, `prepare_script` treats rewording a final script as integrity, but an over-long line as quality.
 
 - **The model never writes text it could get wrong.** For example, select_quotes answers with line numbers and code copies the anchor's words; locate's evidence must appear word for word in the transcript; storyboard's lines and durations are copied from its input.
 - **The retry loop is plain Python, not a subgraph.** Attempts are seconds apart and cheap, so checkpointing each one buys nothing. What happens after the loop gives up is a workflow decision and lives in the node or graph:
@@ -86,10 +92,11 @@ input contract → prompt (six-part outline, versioned file) + model (answers th
   - The rest: the run fails and can be resumed from its last checkpoint (`clipflow.run --thread <id>`; the steps already done are not repeated).
 - **The graph retries transient failures only** (`build.transient`): timeouts, dropped connections, rate limits, 5xx from the relay. A failed agent is not retried again by the graph: it already asked 3 times with its problems listed, and LangGraph's default would have repeated that up to 9 calls in total. Bad input, a missing file or an ffmpeg error fail the same way twice, so they aren't retried either.
 - **Independent calls run in parallel** (`Agent.run_many`, at most `Limits.model_concurrency` = 6 at a time): frame batches, transcript chunks, footage ranking. Results keep input order; one failure doesn't affect the others. This cut frame tagging from 13.1 to 2.4 minutes.
-- **Long inputs are split and sent compactly.** Transcripts and frame tags go as one text line per item, not JSON (about half the tokens). locate_product asks about a 1-hour transcript in chunks of 600 lines, each cached, and merges the blocks.
+- **Long inputs are split and sent compactly.** Transcripts and frame tags go as one text line per item, not JSON (about half the tokens). locate_product asks about a 1-hour transcript in chunks of 600 lines that overlap by 30, so a product talked about across a chunk boundary is seen whole at least once; blocks found twice are merged.
+- **Thin inputs degrade instead of failing:** no word timestamps for the blocks → the line-level transcript is used (`no_word_timestamps` flag); no frames → picture checks are skipped (`no_frames` flag).
 - **Agents don't call tools in v1.** Nodes fetch the data and pass it in. That keeps every input inside the cache key, so runs are reproducible. A tool whitelist becomes worth building when an agent has to search, for example locate over a full 4-hour transcript.
 - **Caching:** the key is agent + prompt version + model + input. That makes resume and rework cheap: re-running a node after a pause costs no model call, and a rework only re-asks agents whose input changed.
-- **Prompts:** `clipflow/prompts/<id>.v<N>.md`, with a YAML header (tier, owner, eval set, change note) and the six fixed sections. V1.0's prompt content is reused. Examples may only come from adopted real runs, never invented ones.
+- **Prompts:** `clipflow/prompts/<id>.v<N>.md`, with a YAML header (tier, owner, eval set, change note) and the six fixed sections. V1.0's prompt content is reused. Examples may only come from adopted real runs, never invented ones. A change is a new version, and the old one stays: the highest version is used, and every trace entry records which one. `select_quotes.v2` and `compliance.v2` came from two real runs (section 5).
 
 ## 5. Rules in code, not in prompts
 
@@ -98,6 +105,33 @@ input contract → prompt (six-part outline, versioned file) + model (answers th
 - `selling_point_priority`: from V1.0 node 6.
 
 Banned words, prices, unverified claims, hook-first, shot variety and caption length are checked in code. The compliance agent only looks for what rules can't see. The final verdict is computed in code, so the model can never overrule a rule hit.
+
+**Quote rules from the real runs.** Two cold runs of the pilot job showed the same problems every time, so they became code checks (`SelectQuotesAgent.quality`, limits in `config.yaml`) and the `select_quotes.v2` prompt:
+
+| Seen in both runs | Rule |
+|---|---|
+| Shots of 0.6–1.0 s that sound cut off; 10–13 shots in 30 s | each quote ≥ 1.2 s (`min_quote_ms`), at most 8 quotes |
+| Sizes said three times; 5 selling points | at most 1 main + 2 supporting points, the same point at most twice |
+| The hook a fit claim followed by a size caveat undercuts itself | no hedge after the hook (`opening_hedges`: 只是说, 但是, 不过 …) |
+| The ending 「我们先上这个裤子吧」, 「再开100单」, a reference to an off-screen colleague | no live-room-only lines (`live_room_phrases`); the prompt also excludes people off screen |
+| After those rules: one 13 s stretch repeating 「我正常穿的是M码」 twice; 「你看见了吗」 with nothing to see | each quote ≤ 8 s (`max_quote_ms`); no clause repeated inside a quote; "look" phrases (`deictic`) only where the frames show the item clearly |
+| Middle quotes starting 「而且…」 「然后…」, which sound cut mid-sentence | no quote starts with a connective, not only the first |
+
+Measured on the same job (same replay, two cold runs before, then after each change):
+
+| | Before (2 runs) | After (last runs) |
+|---|---|---|
+| Hook | a fit claim followed by a size caveat both times | a standalone line describing the fit (1.4 s) |
+| Ending | 「我们先上这个裤子吧」 both times | a fit and styling close |
+| Quotes in ~30 s | 10–13, several under 1.2 s | 6, from 1.4 to 7.3 s |
+| Live-room lines, people off screen | 「再开100单」, a colleague’s name | none |
+| First review: must-fix items | 7–8, so every plan was reworked | 1–3 real guarantees (「不会有任何鼓鼓囊塞」); none after one rework |
+
+**Banned words: ordinals are not claims, and a hit is reworked, not fatal.** A real run was stopped by 「第一」 in 「这是第一点」 ("this is the first point"). Ordinals and counting (`banned_word_exceptions`: 第一点, 第一个, 第一次 …) are now excluded. A real banned word is must-fix, not an immediate stop: in slice mode the system picked that line, so one rework can pick another; after that it blocks approval and delivery until a person fixes it. `hard_fail` remains for findings no rework can fix (`block` severity, e.g. a category the platform doesn't allow); no current rule produces one.
+
+**Deterministic repairs instead of re-asking.** Where a model's slip has one right correction, code makes it: priorities are renumbered, an unknown colour in a frame tag becomes "not visible", and evidence like 「rule:priority.其他：显瘦属于核心属性…」 is reduced to the id it starts with (a real run lost an attempt to that). Invented ids are still rejected.
+
+**Review calibration.** The first review flagged 7–8 "must fix" items on both runs, mostly the anchor's subjective feel (「比打底裤舒服得多」, 「发糯」), so every plan was sent back. `compliance.v2` keeps `fix` for what would mislead a purchase (absolute guarantees, medical hints, unverifiable scarcity such as 「再开100单」, contradictions with the product sheet) and makes subjective praise and general comparisons `note`s for the reviewer.
 
 The test suite shows this on real data. The prototype's 33 s video ended with 「…来169」 while `price_verified` was false. The rules flag that line, the review sends the plan back once, and then it reaches the human with the flag `review_unresolved`. The human can't approve it as is (section 6): the shot has to be deleted or the price verified first. The end card never shows an unverified price.
 
@@ -108,7 +142,7 @@ The test suite shows this on real data. The prototype's 33 s video ended with �
 - **Version:** a decision names the Plan or Timeline version the reviewer saw. A stale version is refused.
 - **Valid edits:** shots must exist; a reorder lists every remaining shot once; you can't delete every shot.
 - **Must-fix vs. waivable** (`rules.MUST_FIX`):
-  - Fact and compliance errors can't be approved, only fixed or rejected: banned words, wrong or unverified prices, unverified material claims, invented caption words. The pilot's target for these in delivered videos is zero.
+  - Fact and compliance errors can't be approved, only fixed or rejected: banned words, wrong or unverified prices, unverified material claims, invented caption words. The pilot's target for these in delivered videos is zero. They get one automatic rework first, like other findings.
   - Other findings (structure, shot variety, the compliance agent's style findings) can be waived, but only with a written reason. The reason is stored in the `Delivery`.
 - **One automatic rework, then the best version.** On the real runs the first rework removed most problems (7 → 0, 6 → 1), and the second never helped (once it went 1 → 4). So `auto_review` reworks at most once (`Limits.review_rounds`), remembers the best agent-made version (fewest must-fix problems, then fewest others), and hands *that* one to the reviewer. A second rework would also cost about a minute.
 - **Human edits are never overwritten:** after a person edits the plan, findings go back to that person, not to an agent. An automatic rework would rebuild the plan and lose the edits.
@@ -177,13 +211,11 @@ ASR (about 8 min per hour of footage), frame sampling, TTS and rendering sit beh
 
 ## 14. Running it
 
-See the [README](../README.md) for local sample setup.
-
 ```powershell
 .\.venv\Scripts\python.exe -m clipflow.run jobs\示例裤A-001.yaml
 ```
 
-- The local development suite covers both modes, loops, pauses and review-gate rules.
+- The tests cover both modes, every loop, every pause and each review-gate rule, on fakes.
 - `python -m clipflow.evaluate <golden.yaml>` scores stored runs against an editor's choices (found rate, overlap; spec 8.2). Sample: `examples/eval/golden.yaml`.
 - `python -m ruff check clipflow` lints; `python -m clipflow.graph.build` regenerates `docs/workflow.mmd` (a test fails if it is out of date).
 - `python -m clipflow.api` serves the HTTP API on http://127.0.0.1:8000 (interactive docs at `/docs`).

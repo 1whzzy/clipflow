@@ -59,10 +59,13 @@ class StoryboardAgent(Agent[StoryboardInput, StoryboardAnswer]):
     tier = "creative"
 
     def check(self, inp, out):
-        problems = []
+        """Integrity: exactly one shot per item, in order (the words and durations are copied from them)."""
         if [s.seq for s in out.shots] != [i.seq for i in inp.items]:
-            problems.append(f"每条内容一个镜头，按原顺序：应为 {[i.seq for i in inp.items]}")
-            return problems
+            return [f"每条内容一个镜头，按原顺序：应为 {[i.seq for i in inp.items]}"]
+        return []
+
+    def quality(self, inp, out):
+        problems = []
         if out.shots[0].purpose != "hook":
             problems.append("首镜 purpose 必须是 hook")
         if out.shots[-1].purpose not in ("cta", "ending"):

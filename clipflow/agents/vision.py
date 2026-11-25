@@ -80,10 +80,12 @@ class VisionAgent(Agent[VisionInput, VisionAnswer]):
             problems.append(f"这些 index 不存在：{extra}")
         if len(got) != len(set(got)):
             problems.append("同一帧标注了多次")
-        for t in out.tags:
-            if t.color and t.color not in inp.colors:
-                problems.append(f"帧 {t.index}：颜色「{t.color}」不在商品颜色 {inp.colors} 里，看不清请留空")
         return problems
+
+    def repair(self, inp, out):
+        """A colour outside the product's colours is a guess: drop it (= not visible) instead of re-asking."""
+        tags = [t if not t.color or t.color in inp.colors else t.model_copy(update={"color": None}) for t in out.tags]
+        return out.model_copy(update={"tags": tags})
 
 
 def to_frame_tags(inp: VisionInput, out: VisionAnswer) -> FrameTags:

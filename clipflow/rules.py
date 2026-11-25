@@ -29,9 +29,16 @@ class Rules:
     claim_terms: list[str] = field(default_factory=list)
     protected_terms: list[str] = field(default_factory=list)
     banned_words: list[str] = field(default_factory=list)
+    banned_word_exceptions: list[str] = field(default_factory=list)
     max_support_points: int = 2
     max_same_shot_type_in_a_row: int = 2
     caption_cue_chars: int = 16
+    min_quote_ms: int = 1200
+    opening_hedges: list[str] = field(default_factory=list)
+    max_quote_ms: int = 8000
+    max_quotes: int = 8
+    max_per_point: int = 2
+    live_room_phrases: list[str] = field(default_factory=list)
     selling_point_priority: dict[str, list[str]] = field(default_factory=dict)
 
     @classmethod
@@ -58,13 +65,21 @@ PRICE = re.compile(r"(\d{2,5})\s*(?:元|块|米)|(?:价格|到手|只要|仅需|
 
 
 def plan_rule_findings(plan: Plan, product: Product, rules: Rules) -> list[Finding]:
-    """Deterministic checks over a plan. `block` findings stop the run; `fix` findings send it back."""
+    """Deterministic checks over a plan. `fix` findings send it back for one rework; those in MUST_FIX
+    then block approval and delivery until a person fixes them (nodes/_human.py).
+
+    A banned word is must-fix, not an immediate stop: in slice mode the system picked that line, so a
+    rework can pick another one. Stopping the whole run (as the first version did) threw away a good
+    plan over one line."""
     out: list[Finding] = []
     for shot in plan.shots:
         text = f"{shot.line} {shot.caption}"
+        checked = text
+        for ok in rules.banned_word_exceptions:  # 「第一点」 counts a point; it isn't 「第一名」
+            checked = checked.replace(ok, "")
         for w in rules.banned_words:
-            if w in text:
-                out.append(Finding(rule_id="rule.banned_word", severity="block", seq=shot.seq,
+            if w in checked:
+                out.append(Finding(rule_id="rule.banned_word", severity="fix", seq=shot.seq,
                                    detail=f"极限词「{w}」", fix_at="content"))
         for t in rules.unverified_claims(text, product):
             out.append(Finding(rule_id="rule.unverified_claim", severity="fix", seq=shot.seq,

@@ -39,10 +39,21 @@ rules:
   protected_terms: [喇叭裤, 微喇, 阔腿裤, 直筒裤, 紧身裤, 打底裤, 显瘦, 不贴腿, 搭鞋, 碳灰色, 炭灰色, 黑色]
   # Absolute / extreme wording that platforms reject (广告法 极限词). A hit stops the run (hard_fail).
   banned_words: [最好, 最便宜, 全网最低, 第一, 顶级, 极品, 绝对, 万能, 100%, 史无前例, 国家级]
+  # Not absolute claims: ordinals and counting (a real run was stopped by 「这是第一点」).
+  banned_word_exceptions: [第一点, 第一个, 第一次, 第一步, 第一天, 第一眼, 第一件, 第一条, 第一款, 第一套, 第一种]
   # SOP 2.2.2: one main selling point and at most two supporting ones per video.
   max_support_points: 2
   # SOP 2.1.1 and the V1.0 review checklist.
   max_same_shot_type_in_a_row: 2
+  # Slice mode, from the real runs (13 shots in 30 s, sizes said three times, 「我们先上这个裤子吧」 as the ending):
+  min_quote_ms: 1200       # shorter sounds cut off (the real runs had 0.6–1.0 s pieces; the best hook was 1.4 s)
+  # Words that undercut the hook when they follow it (「…喇叭裤只是说我现在穿的这个码有点太小了」, twice).
+  opening_hedges: [只是说, 但是, 不过, 就是有点, 可能会]
+  max_quote_ms: 8000       # longer rambles (a 13 s stretch repeating 「我正常穿的是M码」 twice)
+  max_quotes: 8
+  max_per_point: 2         # the same selling point in at most two quotes
+  # Lines that only make sense inside the live room; a short-video viewer can't act on them.
+  live_room_phrases: [上链接, 先上, 上车, 拍一号, 扣1, 扣个1, 扣一, 老客, 下一个, 下一款, 截图, 福袋, 点关注, 直播间, 倒计时, 秒杀, 再开, 加单, 库存]
   caption_cue_chars: 16    # one on-screen caption at most (V1.0: 每句 15 字以内); longer lines are split into several
 
 # Selling-point order by category and price band. From the V1.0 workflow design, node 6 (llm_selling_points).

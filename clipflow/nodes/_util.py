@@ -30,7 +30,13 @@ def trace(node: str, result: AgentResult) -> dict:
         "tokens_in": sum(a.tokens_in for a in result.attempts),
         "tokens_out": sum(a.tokens_out for a in result.attempts),
         "seconds": round(sum(a.seconds for a in result.attempts), 1),
+        "warnings": result.warnings,
     }
+
+
+def warning_flags(node: str, result: AgentResult) -> list[str]:
+    """Quality rules an agent's best attempt still breaks; shown to the reviewer at both pauses."""
+    return [f"{node}_warning:{w}" for w in result.warnings]
 
 
 def rework_notes(ctx: RunContext, state: RunState, fix_at: str | None = None) -> list[str]:

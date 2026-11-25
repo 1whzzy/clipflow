@@ -12,7 +12,7 @@ from ..graph.context import RunContext
 from ..graph.state import RunState
 from ..rules import MUST_FIX, caption_edit_problems, plan_rule_findings
 from ._human import ask, blocking_issues, waivable_findings
-from ._util import load, request, rework_notes, trace
+from ._util import load, request, rework_notes, trace, warning_flags
 
 CHARS_PER_MINUTE = 220  # V2.0 §5.1: script length → duration estimate, until TTS gives real durations
 
@@ -55,7 +55,8 @@ def storyboard(state: RunState, runtime: Runtime[RunContext]) -> dict:
     board = StoryboardAgent().run_cached(b_inp, ctx.models, ctx.store)
     return {"selling": ctx.store.put("selling", selling.output),
             "plan": ctx.store.put("plan", to_plan(b_inp, board.output)), "plan_by": "agent",
-            "trace": [trace("storyboard", selling), trace("storyboard", board)]}
+            "trace": [trace("storyboard", selling), trace("storyboard", board)],
+            "flags": warning_flags("selling", selling) + warning_flags("storyboard", board)}
 
 
 def match_assets(state: RunState, runtime: Runtime[RunContext]) -> dict:

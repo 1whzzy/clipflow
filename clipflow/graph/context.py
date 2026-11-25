@@ -21,6 +21,7 @@ class Limits:
     frames_per_call: int = 12
     model_concurrency: int = 6  # parallel model calls per step (relay rate limit; V2.0 §3.4)
     locate_lines_per_call: int = 600  # same chunk size as the prototype (run_job.CHUNK_LINES)
+    locate_overlap_lines: int = 30  # neighbouring chunks share this many lines (about a minute of speech)
 
 
 @dataclass

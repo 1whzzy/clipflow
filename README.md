@@ -25,7 +25,7 @@ Copy `.env.example` to `.env` and fill in the gateway and database values. Never
 
 ## Verification
 
-本地完整工作区通过 70 项测试和 Ruff 检查。架构说明记录了出片和数据库恢复的验收范围。
+本地完整工作区通过 80 项测试和 Ruff 检查。架构说明记录了出片和数据库恢复的验收范围。
 
 ## Run a real job
 

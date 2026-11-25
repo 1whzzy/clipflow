@@ -10,7 +10,7 @@ from ..contracts import Block, FrameTags, ProductBlocks, TimeRange, Transcript
 from ..contracts.request import parse_ms
 from ..graph.context import RunContext
 from ..graph.state import RunState
-from ._util import load, request, rework_notes, trace
+from ._util import load, request, rework_notes, trace, warning_flags
 
 
 def transcribe(state: RunState, runtime: Runtime[RunContext]) -> dict:
@@ -38,9 +38,8 @@ def locate_product(state: RunState, runtime: Runtime[RunContext]) -> dict:
              if window is None or (ln.end_ms > window.start_ms and ln.start_ms < window.end_ms)]
     entries, flags, found = [], [], []
     # an hour of replay is ~1,800 lines: ask in chunks (each cached on its own), then merge
-    step = ctx.limits.locate_lines_per_call
-    inputs = [LocateInput(product=req.product, asset_id=transcript.asset_id, window=window, lines=lines[i:i + step])
-              for i in range(0, len(lines), step)]
+    inputs = [LocateInput(product=req.product, asset_id=transcript.asset_id, window=window, lines=chunk)
+              for chunk in chunks(lines, ctx.limits.locate_lines_per_call, ctx.limits.locate_overlap_lines)]
     results = LocateAgent().run_many(inputs, ctx.models, ctx.store, ctx.limits.model_concurrency)
     for inp, result in zip(inputs, results, strict=True):
         if isinstance(result, AgentFailed):
@@ -64,6 +63,17 @@ def locate_product(state: RunState, runtime: Runtime[RunContext]) -> dict:
             "status": "running", "trace": entries, "flags": flags}
 
 
+def chunks(lines: list, size: int, overlap: int) -> list[list]:
+    """Consecutive chunks of `size` lines, each sharing `overlap` lines with the one before, so a
+    product talked about across a chunk boundary is seen whole in at least one chunk. Blocks found
+    twice in the overlap are joined by `_merge`."""
+    if len(lines) <= size:
+        return [lines] if lines else []
+    step = max(1, size - overlap)
+    out = [lines[i:i + size] for i in range(0, len(lines) - overlap, step)]
+    return [c for c in out if c]
+
+
 def _merge(blocks: list[Block], gap_ms: int = 5000) -> list[Block]:
     """Join blocks that touch or nearly touch (one stretch of selling split across two chunks)."""
     out: list[Block] = []
@@ -72,8 +82,8 @@ def _merge(blocks: list[Block], gap_ms: int = 5000) -> list[Block]:
             last = out[-1]
             conf = "high" if "high" in (last.confidence, b.confidence) else "medium"
             out[-1] = last.model_copy(update={"end_ms": max(last.end_ms, b.end_ms), "confidence": conf,
-                                              "evidence": last.evidence + b.evidence,
-                                              "line_ids": last.line_ids + b.line_ids})
+                                              "evidence": list(dict.fromkeys(last.evidence + b.evidence)),
+                                              "line_ids": sorted(set(last.line_ids + b.line_ids))})
         else:
             out.append(b)
     return out
@@ -84,7 +94,17 @@ def refine_words(state: RunState, runtime: Runtime[RunContext]) -> dict:
     ctx = runtime.context
     blocks = load(ctx, state, "blocks", ProductBlocks)
     ranges = [TimeRange(start_ms=b.start_ms, end_ms=b.end_ms) for b in blocks.blocks]
-    return {"clauses": ctx.store.put("clauses", ctx.asr.clauses(blocks.asset_id, ranges))}
+    clauses = ctx.asr.clauses(blocks.asset_id, ranges)
+    if clauses.lines:
+        return {"clauses": ctx.store.put("clauses", clauses)}
+    # Word timestamps came back empty (an ASR hiccup on these ranges): use the line-level transcript
+    # inside the blocks. Cuts are less exact, but the run goes on, flagged, instead of feeding the
+    # quote agent nothing.
+    transcript = load(ctx, state, "transcript", Transcript)
+    inside = [ln for ln in transcript.lines if any(r.start_ms <= ln.start_ms < r.end_ms for r in ranges)]
+    fallback = Transcript(asset_id=blocks.asset_id, model=f"{transcript.model} (lines, no word timestamps)",
+                          lines=inside)
+    return {"clauses": ctx.store.put("clauses", fallback), "flags": ["no_word_timestamps:using_line_transcript"]}
 
 
 def look(state: RunState, runtime: Runtime[RunContext]) -> dict:
@@ -97,6 +117,8 @@ def look(state: RunState, runtime: Runtime[RunContext]) -> dict:
     frames = ctx.frames.sample(blocks.asset_id, ranges, ctx.limits.frame_every_ms)
     refs = ctx.library.reference_images(req.product.name)
     tags, entries, flags = [], [], []
+    if not frames:  # nothing to look at: picture checks are skipped, and the reviewer is told so
+        flags.append("no_frames:picture_checks_skipped")
     step = ctx.limits.frames_per_call
     inputs = [VisionInput(product=req.product.name, category=req.product.category, colors=req.product.colors,
                           frames=frames[i:i + step], reference_paths=refs) for i in range(0, len(frames), step)]
@@ -135,9 +157,12 @@ def select_quotes(state: RunState, runtime: Runtime[RunContext]) -> dict:
         rules=QuoteRules(target_ms=req.options.target_ms, focus=req.options.focus,
                          hook_style=req.options.hook_style, hook_keywords=req.options.hook_keywords,
                          must_mention=req.options.must_mention, opening_connectives=r.opening_connectives,
-                         hesitations=r.hesitations, claim_terms=r.claim_terms),
+                         hesitations=r.hesitations, claim_terms=r.claim_terms, min_quote_ms=r.min_quote_ms,
+                         max_quotes=r.max_quotes, max_support=r.max_support_points, max_per_point=r.max_per_point,
+                         live_room_phrases=r.live_room_phrases, opening_hedges=r.opening_hedges,
+                         max_quote_ms=r.max_quote_ms, deictic=r.deictic),
         rework_notes=rework_notes(ctx, state, "content"),
     )
     result = SelectQuotesAgent().run_cached(inp, ctx.models, ctx.store)
     return {"quotes": ctx.store.put("quotes", to_quotes(inp, result.output)),
-            "trace": [trace("select_quotes", result)]}
+            "trace": [trace("select_quotes", result)], "flags": warning_flags("select_quotes", result)}

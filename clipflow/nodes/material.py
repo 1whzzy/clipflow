@@ -6,7 +6,7 @@ from ..agents.script import ScriptTaskInput, to_script_lines
 from ..contracts import Plan, ScriptInput, ScriptLines, Speech, VoiceTrack
 from ..graph.context import RunContext
 from ..graph.state import RunState
-from ._util import load, request, rework_notes, trace
+from ._util import load, request, rework_notes, trace, warning_flags
 
 
 def prepare_script(state: RunState, runtime: Runtime[RunContext]) -> dict:
@@ -18,7 +18,7 @@ def prepare_script(state: RunState, runtime: Runtime[RunContext]) -> dict:
                           rework_notes=rework_notes(ctx, state, "content"))
     result = PrepareScriptAgent().run_cached(inp, ctx.models, ctx.store)
     return {"script_lines": ctx.store.put("script_lines", to_script_lines(inp, result.output)),
-            "trace": [trace("prepare_script", result)]}
+            "trace": [trace("prepare_script", result)], "flags": warning_flags("prepare_script", result)}
 
 
 def tts(state: RunState, runtime: Runtime[RunContext]) -> dict:
