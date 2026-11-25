@@ -12,7 +12,7 @@ Turns a product and its footage into a finished vertical selling video for Douyi
 ## 评审材料
 
 - [项目业务说明](短视频带货剪辑项目业务说明.docx)
-- [18 节点流程图原图](短视频带货剪辑18节点流程图.png)
+- [V2.0 技术方案流程图](技术方案V2.0流程图续图.png)
 - [架构说明](docs/ARCHITECTURE.md)与[当前代码生成的流程图](docs/workflow.mmd)
 
 ## Setup
