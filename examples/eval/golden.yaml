@@ -1,0 +1,10 @@
+# Sample golden set (desensitized): one case = one replay + one product + the time ranges an editor
+# actually used in the human-cut slice. Real cases come from the human-cut slices on the shared drive
+# and stay local. Score stored runs with:  .\.venv\Scripts\python.exe -m clipflow.evaluate golden.yaml
+cases:
+  - product: 示例裤A
+    asset_id: material/demo/live_part2.mp4
+    human:                         # m:ss, h:mm:ss or milliseconds
+      - ["21:40", "21:46"]
+      - ["4:16", "4:23"]
+      - ["6:00", "6:05"]

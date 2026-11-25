@@ -27,10 +27,23 @@ from . import routing
 from .context import RunContext
 from .state import RunState
 
-# Retries for transient failures (timeouts, rate limits, a worker hiccup). Contract problems are
-# handled inside each agent's own loop; deterministic errors (bad input) are not retried.
-MODEL = RetryPolicy(max_attempts=3, initial_interval=2.0, backoff_factor=2.0)
-WORKER = RetryPolicy(max_attempts=2, initial_interval=5.0)
+def transient(exc: Exception) -> bool:
+    """Only failures that a second try can fix: timeouts, dropped connections, rate limits, a 5xx
+    from the model relay. Everything else is not retried here:
+    - AgentFailed: the agent already asked 3 times with its problems listed; asking 3 more times
+      would only repeat that (LangGraph's default would retry it, up to 9 calls in total);
+    - bad input, a missing file, an ffmpeg error: the same input fails the same way."""
+    import openai
+
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    # APIConnectionError includes APITimeoutError
+    return isinstance(exc, (openai.APIConnectionError, openai.RateLimitError, openai.InternalServerError))
+
+
+# Transient failures only (see `transient`); contract problems are handled inside each agent's loop.
+MODEL = RetryPolicy(max_attempts=3, initial_interval=2.0, backoff_factor=2.0, retry_on=transient)
+WORKER = RetryPolicy(max_attempts=2, initial_interval=5.0, retry_on=transient)
 
 NODES = [  # (number, name, kind) — the 18 workflow nodes, as in the meeting brief and the spec
     (1, "intake", "code"), (2, "route_mode", "code + branch"),
@@ -105,3 +118,11 @@ def compile_app(checkpointer):
 
 def mermaid() -> str:
     return build_graph().compile().get_graph(xray=True).draw_mermaid()
+
+
+if __name__ == "__main__":  # python -m clipflow.graph.build → regenerate docs/workflow.mmd
+    from pathlib import Path
+
+    target = Path(__file__).resolve().parents[2] / "docs" / "workflow.mmd"
+    target.write_text(mermaid(), encoding="utf-8", newline="\n")
+    print(f"wrote {target}")

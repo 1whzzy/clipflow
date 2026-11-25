@@ -1,0 +1,11 @@
+# Lint settings for clipflow/ and tests/ (pilot/ is the prototype and is not linted).
+line-length = 120
+target-version = "py314"
+
+[lint]
+select = ["E", "F", "W", "B", "UP", "SIM"]
+ignore = [
+    "E731",    # small lambdas as local helpers are fine
+    "SIM108",  # ternaries are not always clearer
+    "UP046", "UP047",  # keep Generic[...]; the new [T] syntax would be churn only
+]

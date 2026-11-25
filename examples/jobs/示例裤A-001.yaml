@@ -1,0 +1,15 @@
+# Sample job (desensitized). Copy to jobs/ and run:
+#   .\.venv\Scripts\python.exe -m clipflow.run jobs\示例裤A-001.yaml
+product: 示例裤A               # loads products/示例裤A.yaml
+
+sources:
+  replays:
+    - file: material/demo/live_part2.mp4   # optional start/end: a rough range, e.g. start: "4:00", end: "9:30"
+
+requirements:
+  length: [30, 45]                # seconds
+  focus: [显瘦]                   # selling points to lead with (optional)
+  hook_style: any                 # 痛点 / 福利价格 / 效果展示 / 悬念提问 / 场景, or any
+  hook_keywords: [微喇, 喇叭, 不贴腿]  # the first sentence must say one of these
+  must_mention: [显瘦, 喇叭]
+  cta: ""                         # end-card call to action; empty = none

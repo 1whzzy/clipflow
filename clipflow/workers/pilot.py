@@ -13,6 +13,7 @@ What each adapter reuses from the prototype:
 """
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -24,8 +25,8 @@ import yaml
 
 from ..agents.vision import Frame
 from ..contracts import (
-    AssetRange, Line, Measured, Product, ProductBlocks, RenderResult, SourceVideo, TimeRange, Timeline, Transcript,
-    Word,
+    AssetRange, AudioItem, Line, Measured, Product, ProductBlocks, RenderResult, SourceVideo, TimeRange, Timeline,
+    Transcript, Word,
 )
 from ..settings import ROOT
 
@@ -60,7 +61,7 @@ class PilotASR:
         lines = [Line(i=n, start_ms=_ms(r["start"]), end_ms=max(_ms(r["end"]), _ms(r["start"]) + 1), text=r["text"])
                  for n, r in enumerate(rows) if r["text"].strip()]
         if window:
-            lines = [l for l in lines if l.end_ms > window.start_ms and l.start_ms < window.end_ms]
+            lines = [ln for ln in lines if ln.end_ms > window.start_ms and ln.start_ms < window.end_ms]
         return Transcript(asset_id=asset_id, range=window, model="faster-whisper large-v3", lines=lines)
 
     def clauses(self, asset_id: str, ranges: list[TimeRange]) -> Transcript:
@@ -196,6 +197,14 @@ def _run(cmd: list, cwd=None) -> None:
         raise RuntimeError(f"ffmpeg failed ({r.returncode}): {r.stderr[-800:]}")
 
 
+def _loudness(path: Path, af: str) -> dict | None:
+    """Run ffmpeg's loudnorm in measuring mode over `path`; return its JSON stats (input_i, …)."""
+    r = subprocess.run([common.ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(path), "-af", af, "-f", "null", "-"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", r.stderr, re.S)
+    return json.loads(m.group(0)) if m else None
+
+
 def _wrap(text: str, width: int = 14) -> str:
     """Two caption lines at most, split near the middle (ASS line break: \\N)."""
     text = text.strip("，,。 ")
@@ -234,7 +243,8 @@ class PilotRenderer:
         else:
             cmd += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
         vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS},"
-              f"format=yuv420p,setsar=1[v]")
+              f"format=yuv420p,setsar=1,tpad=stop_mode=clone:stop_duration={dur:.3f}[v]")  # hold the last frame
+              # if the footage is shorter than the shot (a voice line longer than the clip)
         af = f"[1:a]afade=t=in:d=0.04,afade=t=out:st={max(0.0, dur - 0.06):.3f}:d=0.06,aresample=48000,apad[a]"
         _run(cmd + ["-filter_complex", f"{vf};{af}", "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}", *enc,
                     "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", str(out)])
@@ -263,11 +273,18 @@ class PilotRenderer:
             cue_list = [{"start": c.start_ms / 1000, "end": c.end_ms / 1000, "text": _wrap(c.text),
                          "pos": c.position} for c in timeline.captions]
             card = timeline.end_card
-            cuelib.write_ass(Path(tmp) / "captions.ass", cue_list,
-                             {"start": card.start_ms / 1000, "end": card.end_ms / 1000, "lines": card.lines} if card else None)
+            card_cue = {"start": card.start_ms / 1000, "end": card.end_ms / 1000, "lines": card.lines} if card else None
+            cuelib.write_ass(Path(tmp) / "captions.ass", cue_list, card_cue)
             hold = (card.end_ms - card.start_ms) / 1000 if card else 0
             vf = f"tpad=stop_mode=clone:stop_duration={hold},subtitles=captions.ass"
-            af = f"apad=pad_dur={hold},loudnorm=I=-14:TP=-1.5:LRA=11"
+            # Two-pass loudness: measure the padded audio first, then apply the exact correction.
+            # One pass guesses on the fly and lands ±1–2 LU off on short clips (−15.2 on a 15 s clip).
+            target = "I=-14:TP=-1.5:LRA=11"
+            m = _loudness(Path(tmp) / "cut.mp4", f"apad=pad_dur={hold},loudnorm={target}:print_format=json")
+            af = f"apad=pad_dur={hold},loudnorm={target}"
+            if m:
+                af += (f":measured_I={m['input_i']}:measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}"
+                       f":measured_thresh={m['input_thresh']}:offset={m['target_offset']}:linear=true")
             _run([common.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y", "-i", "cut.mp4", "-vf", vf, *enc,
                   "-af", af, "-ar", "48000", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(final)],
                  cwd=tmp)
@@ -279,11 +296,7 @@ class PilotRenderer:
         info = common.probe(p)
         v = next(s for s in info["streams"] if s["codec_type"] == "video")
         num, den = (int(x) for x in v["r_frame_rate"].split("/"))
-        r = subprocess.run([common.ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(p), "-af",
-                            "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace")
-        m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", r.stderr, re.S)
-        stats = json.loads(m.group(0)) if m else {}
+        stats = _loudness(p, "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json") or {}
         return Measured(duration_ms=_ms(info["format"]["duration"]), fps=num / den, width=v["width"],
                         height=v["height"], lufs=float(stats["input_i"]) if "input_i" in stats else None,
                         peak_db=float(stats["input_tp"]) if "input_tp" in stats else None)
@@ -293,3 +306,37 @@ class PilotRenderer:
 class NoTTS:
     def speak(self, run_id, lines, voice):
         raise NotImplementedError("no TTS service chosen yet (material mode); open question")
+
+
+@dataclass
+class WindowsTTS:
+    """Stand-in voice for the pilot: Windows' built-in zh-CN voice (offline, robotic). It proves the
+    material-mode path end to end; the real TTS service is an open question. One WAV per line,
+    cached by text + voice, so a re-render doesn't re-synthesise."""
+
+    voice: str = "Microsoft Huihui Desktop"
+    out: Path = ROOT / "pilot" / "work" / "tts"
+
+    def speak(self, run_id, lines, voice=None):
+        import wave
+
+        voice = voice or self.voice
+        script = Path(__file__).with_name("tts_windows.ps1")
+        self.out.mkdir(parents=True, exist_ok=True)
+        clips = []
+        for line in lines:
+            key = hashlib.sha256(f"{voice}|{line.text}".encode()).hexdigest()[:16]
+            wav = self.out / f"{key}.wav"
+            if not wav.exists():
+                with tempfile.TemporaryDirectory(dir=self.out) as tmp:  # same drive, so the rename below works
+                    txt = Path(tmp) / "line.txt"
+                    txt.write_text(line.text, encoding="utf-8")
+                    part = Path(tmp) / "line.wav"
+                    _run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
+                          "-TextFile", txt, "-OutFile", part, "-Voice", voice])
+                    os.replace(part, wav)
+            with wave.open(str(wav), "rb") as w:
+                duration = int(w.getnframes() * 1000 / w.getframerate())
+            clips.append(AudioItem(kind="voice", asset_id=str(wav.relative_to(ROOT)).replace("\\", "/"),
+                                   in_ms=0, out_ms=max(duration, 1), at_ms=0))
+        return clips

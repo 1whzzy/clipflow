@@ -1,0 +1,14 @@
+# Sample material-mode job (desensitized): a final script + the product's footage → a video with a voice-over.
+# Copy to jobs/ and run:  .\.venv\Scripts\python.exe -m clipflow.run jobs\示例裤A-M01.yaml
+product: 示例裤A
+
+script:
+  status: final                 # final: split into lines only, never reworded; draft: may be improved
+  text: >-
+    这条喇叭裤真的不贴腿，显瘦又显高。面料轻薄，上身很舒服。黑色和碳灰两个颜色都好搭，上班穿也合适。喜欢的姐妹点下方链接。
+
+requirements:
+  length: [12, 45]                # seconds
+  focus: [显瘦]
+  hook_keywords: []
+  cta: ""

@@ -66,8 +66,7 @@ class FileStore:
         artifact_id = f"{kind}/{content_hash(obj)}"
         path = self.root / f"{artifact_id}.json"
         if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(obj.model_dump_json(indent=2), encoding="utf-8")
+            _write_atomic(path, obj.model_dump_json(indent=2))
         return artifact_id
 
     def get(self, artifact_id: str, model: type[M]) -> M:
@@ -78,6 +77,21 @@ class FileStore:
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
     def put_cached(self, key: str, data: dict) -> None:
-        path = self.root / "_cache" / f"{key}.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        _write_atomic(self.root / "_cache" / f"{key}.json", json.dumps(data, ensure_ascii=False))
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write to a temporary file next to the target, then rename it into place. Another run (or a
+    parallel agent call) reading the same file sees the old file or the whole new one, never half."""
+    import os
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise

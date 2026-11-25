@@ -30,8 +30,8 @@ def _items(ctx: RunContext, state: RunState) -> list[StoryItem]:
                                    live_shot_type=seen[0].shot_type if seen else None))
         return items
     lines = load(ctx, state, "script_lines", ScriptLines).lines
-    return [StoryItem(seq=l.seq, text=l.text, point=l.point,
-                      duration_ms=max(1000, len(_norm(l.text)) * 60_000 // CHARS_PER_MINUTE)) for l in lines]
+    return [StoryItem(seq=ln.seq, text=ln.text, point=ln.point,
+                      duration_ms=max(1000, len(_norm(ln.text)) * 60_000 // CHARS_PER_MINUTE)) for ln in lines]
 
 
 def storyboard(state: RunState, runtime: Runtime[RunContext]) -> dict:
@@ -81,6 +81,13 @@ def match_assets(state: RunState, runtime: Runtime[RunContext]) -> dict:
                 shots.append(shot.model_copy(update={"clip": _picture(live), "speech": live}))
                 continue
         found = ctx.library.find(req.product.name, req.product.colors, shot.shot_type, shot.duration_ms)
+        if not found and live is None:
+            # material mode has no live picture to fall back on: rather than an empty shot, use the
+            # product's other footage and flag it (the reviewer sees it; the reshoot list keeps it)
+            found = ctx.library.find(req.product.name, req.product.colors, None, shot.duration_ms)
+            if found:
+                flags.append(f"shot_type_substituted:shot{shot.seq}:{shot.shot_type}->{found[0][1].shot_type}")
+                gaps.append(f"镜头 {shot.seq}：缺 {shot.shot_type} 素材，暂用 {found[0][1].shot_type}")
         if not found:
             shots.append(shot.model_copy(update={"clip": _picture(live), "speech": live or shot.speech}))
             if live is None:
@@ -95,7 +102,7 @@ def match_assets(state: RunState, runtime: Runtime[RunContext]) -> dict:
     # rank all shots that need product footage at once
     inputs = [inp for inp, _ in ranking.values()]
     results = AssetAgent().run_many(inputs, ctx.models, ctx.store, ctx.limits.model_concurrency)
-    for (pos, (inp, live)), result in zip(ranking.items(), results):
+    for (pos, (inp, live)), result in zip(ranking.items(), results, strict=True):
         if isinstance(result, AgentFailed):
             clip, alternates = to_clips(inp, AssetAgent.output_model(choice=0))
             flags.append(f"assets_degraded:shot{inp.seq}:{result}")
@@ -115,8 +122,9 @@ def auto_review(state: RunState, runtime: Runtime[RunContext]) -> dict:
     plan = load(ctx, state, "plan", Plan)
     found = plan_rule_findings(plan, req.product, ctx.rules)
     if state.get("phase") == "video" and state.get("clauses"):  # a reviewer changed captions
-        allowed = {w for line in load(ctx, state, "clauses", Transcript).lines for w in ctx.rules.protected_terms
-                   + ctx.rules.claim_terms if w in line.text} | set(req.product.selling_points) | set(req.product.colors)
+        said = "".join(line.text for line in load(ctx, state, "clauses", Transcript).lines)
+        allowed = {w for w in ctx.rules.protected_terms + ctx.rules.claim_terms if w in said}
+        allowed |= set(req.product.selling_points) | set(req.product.colors)
         for s in plan.shots:
             if s.caption != s.line:
                 for p in caption_edit_problems(s.caption, allowed, req.product, ctx.rules):

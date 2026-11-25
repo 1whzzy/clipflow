@@ -34,13 +34,15 @@ def locate_product(state: RunState, runtime: Runtime[RunContext]) -> dict:
         return {"blocks": ctx.store.put("blocks", linked), "status": "running", "flags": ["blocks_from_ingestion"]}
     hint = state.get("time_hint")
     window = TimeRange(**hint) if hint else None
-    lines = [l for l in transcript.lines if window is None or (l.end_ms > window.start_ms and l.start_ms < window.end_ms)]
+    lines = [ln for ln in transcript.lines
+             if window is None or (ln.end_ms > window.start_ms and ln.start_ms < window.end_ms)]
     entries, flags, found = [], [], []
     # an hour of replay is ~1,800 lines: ask in chunks (each cached on its own), then merge
     step = ctx.limits.locate_lines_per_call
     inputs = [LocateInput(product=req.product, asset_id=transcript.asset_id, window=window, lines=lines[i:i + step])
               for i in range(0, len(lines), step)]
-    for inp, result in zip(inputs, LocateAgent().run_many(inputs, ctx.models, ctx.store, ctx.limits.model_concurrency)):
+    results = LocateAgent().run_many(inputs, ctx.models, ctx.store, ctx.limits.model_concurrency)
+    for inp, result in zip(inputs, results, strict=True):
         if isinstance(result, AgentFailed):
             flags.append(f"locate_failed:lines{inp.lines[0].i}-{inp.lines[-1].i}:{result}")
             continue
@@ -98,7 +100,8 @@ def look(state: RunState, runtime: Runtime[RunContext]) -> dict:
     step = ctx.limits.frames_per_call
     inputs = [VisionInput(product=req.product.name, category=req.product.category, colors=req.product.colors,
                           frames=frames[i:i + step], reference_paths=refs) for i in range(0, len(frames), step)]
-    for inp, result in zip(inputs, VisionAgent().run_many(inputs, ctx.models, ctx.store, ctx.limits.model_concurrency)):
+    results = VisionAgent().run_many(inputs, ctx.models, ctx.store, ctx.limits.model_concurrency)
+    for inp, result in zip(inputs, results, strict=True):
         if isinstance(result, AgentFailed):  # those frames stay untagged; the run goes on, flagged
             flags.append(f"vision_degraded:{inp.frames[0].at_ms}-{inp.frames[-1].at_ms}:{result}")
             continue

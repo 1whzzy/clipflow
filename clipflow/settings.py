@@ -32,7 +32,7 @@ class Settings:
     artifacts_dir: Path = ROOT / "pilot" / "work" / "artifacts"
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls) -> Settings:
         env = read_env()
         return cls(
             llm_base_url=env.get("LLM_BASE_URL", "").rstrip("/"),

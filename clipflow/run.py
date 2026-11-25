@@ -27,7 +27,27 @@ from .graph.context import RunContext
 from .llm import RelayModels
 from .settings import ROOT, Settings
 from .storage import FileStore, open_checkpointer
-from .workers.pilot import NoCases, NoTTS, PilotASR, PilotFrames, PilotLibrary, PilotRenderer, YamlCatalog
+from .workers.pilot import NoCases, PilotASR, PilotFrames, PilotLibrary, PilotRenderer, WindowsTTS, YamlCatalog
+
+
+def real_context(settings: Settings, store: str | None = None) -> RunContext:
+    """The workers for this workstation: the LLM relay, the prototype's ASR/frames/render, Windows TTS."""
+    return RunContext(store=FileStore(store or settings.artifacts_dir), models=RelayModels(settings), asr=PilotASR(),
+                      frames=PilotFrames(), tts=WindowsTTS(), renderer=PilotRenderer(), library=PilotLibrary(),
+                      cases=NoCases(), catalog=YamlCatalog())
+
+
+def reachable_db(settings: Settings) -> str | None:
+    """DATABASE_URL if Postgres answers within 3 s, else None (run state stays in memory)."""
+    if not settings.database_url:
+        return None
+    try:
+        import psycopg
+        psycopg.connect(settings.database_url, connect_timeout=3).close()
+        return settings.database_url
+    except Exception as e:  # noqa: BLE001
+        print(f"Postgres not reachable ({type(e).__name__}); keeping run state in memory.")
+        return None
 
 
 def request_from_job(path: str) -> dict:
@@ -41,9 +61,11 @@ def request_from_job(path: str) -> dict:
         run_id=f"{job['product']}-{time.strftime('%m%d-%H%M%S')}", mode="slice" if replays else "material",
         product_id=job["product"],
         source_videos=[{"asset_id": r["file"], "start_ms": r.get("start"), "end_ms": r.get("end")} for r in replays],
+        script=job.get("script"),  # material mode: {text, status: final|draft}
         options={"target_ms": (lo * 1000, hi * 1000), "hook_keywords": req.get("hook_keywords", []),
                  "must_mention": req.get("must_mention", []), "hook_style": req.get("hook_style", "any"),
-                 "focus": req.get("focus", []), "cta": req.get("cta", "")},
+                 "focus": req.get("focus", []), "cta": req.get("cta", ""),
+                 "confirm_plan": req.get("confirm_plan", True)},
     ).model_dump(mode="json")
 
 
@@ -76,6 +98,23 @@ def drive(app, inp, cfg, ctx, timings: dict) -> list:
     return pauses
 
 
+def continue_thread(app, cfg, ctx, timings: dict) -> list:
+    """Pick up an existing thread from its last checkpoint (e.g. in a new process, after a crash).
+
+    - waiting at a pause: return that pause, so it can be answered;
+    - stopped by an error: run on from the step that failed (input None = "continue");
+    - finished: nothing to do.
+    Note: `Command(resume=None)` is not the same as None. It is an answer to a pause, and LangGraph
+    fails on it when there is no pause to answer."""
+    snap = app.get_state(cfg)
+    if not snap.next:
+        return []
+    waiting = [i for task in snap.tasks for i in task.interrupts]
+    if waiting:
+        return waiting
+    return drive(app, None, cfg, ctx, timings)
+
+
 def show(pause: dict) -> None:
     view = {k: v for k, v in pause.items() if k not in ("plan",)}
     if "plan" in pause:
@@ -90,33 +129,30 @@ def main(argv=None) -> int:
     p.add_argument("--auto", action="store_true", help="scripted reviewer for smoke tests")
     p.add_argument("--thread", help="resume this thread (needs Postgres)")
     p.add_argument("--store", help="artifact/cache folder (default: pilot/work/artifacts)")
+    p.add_argument("--stop-at-pause", action="store_true",
+                   help="exit at the first pause, leaving the run in Postgres to answer later with --thread")
     args = p.parse_args(argv)
 
     settings = Settings.load()
-    ctx = RunContext(store=FileStore(args.store or settings.artifacts_dir), models=RelayModels(settings), asr=PilotASR(),
-                     frames=PilotFrames(), tts=NoTTS(), renderer=PilotRenderer(), library=PilotLibrary(),
-                     cases=NoCases(), catalog=YamlCatalog())
-    db = settings.database_url or None
-    if db:
-        try:
-            import psycopg
-            psycopg.connect(db, connect_timeout=3).close()
-        except Exception as e:  # noqa: BLE001
-            print(f"Postgres not reachable ({type(e).__name__}); keeping run state in memory.")
-            db = None
-    with open_checkpointer(db) as saver:
+    ctx = real_context(settings, args.store)
+    with open_checkpointer(reachable_db(settings)) as saver:
         app = compile_app(saver)
         thread = args.thread or f"run-{uuid.uuid4().hex[:8]}"
         cfg = {"configurable": {"thread_id": thread}, "recursion_limit": 80}
         t0 = time.time()
         timings: dict[str, float] = {}
         try:
-            first = Command(resume=None) if args.thread else {"input": request_from_job(args.job)}
-            pauses = drive(app, first, cfg, ctx, timings)
+            if args.thread:
+                pauses = continue_thread(app, cfg, ctx, timings)
+            else:
+                pauses = drive(app, {"input": request_from_job(args.job)}, cfg, ctx, timings)
             while pauses:
                 pause = pauses[0].value
                 print(f"\n== paused: {pause['kind']} (thread {thread}) ==")
                 show(pause)
+                if args.stop_at_pause:
+                    print(f"stopped at the pause; answer it later with --thread {thread}")
+                    return 3
                 answer = auto_answer(pause) if args.auto else json.loads(input("answer (JSON)> "))
                 print(f"-> {json.dumps(answer, ensure_ascii=False)}")
                 pauses = drive(app, Command(resume=answer), cfg, ctx, timings)
@@ -133,7 +169,8 @@ def main(argv=None) -> int:
         by_node: dict[str, float] = {}
         for t in calls:
             by_node[t["node"]] = by_node.get(t["node"], 0.0) + t.get("seconds", 0.0)
-        print("model seconds per node:", ", ".join(f"{k} {v:.0f}" for k, v in sorted(by_node.items(), key=lambda x: -x[1])))
+        slowest = sorted(by_node.items(), key=lambda x: -x[1])
+        print("model seconds per node:", ", ".join(f"{k} {v:.0f}" for k, v in slowest))
         print(f"model calls: {sum(t['attempts'] for t in calls)} "
               f"({sum(t['tokens_in'] for t in calls)} in / {sum(t['tokens_out'] for t in calls)} out tokens), "
               f"cached steps: {sum(t['cached'] for t in state.get('trace', []))}")

@@ -23,7 +23,8 @@ def request(ctx: RunContext, state: RunState) -> RunRequest:
 def trace(node: str, result: AgentResult) -> dict:
     """One trace entry per agent call: enough to find the prompt version and cost of any output."""
     return {
-        "id": uuid.uuid4().hex[:12], "node": node, "prompt": result.prompt, "cached": result.cached, "attempts": len(result.attempts),
+        "id": uuid.uuid4().hex[:12], "node": node, "prompt": result.prompt, "cached": result.cached,
+        "attempts": len(result.attempts),
         "problems": [p for a in result.attempts for p in a.problems][:10],
         "model": result.attempts[-1].model if result.attempts else None,
         "tokens_in": sum(a.tokens_in for a in result.attempts),

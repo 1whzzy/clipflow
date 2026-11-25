@@ -71,7 +71,7 @@ class LocateAgent(Agent[LocateInput, LocateAnswer]):
                     problems.append(f"第 {n} 段：证据「{q[:30]}」不是这些行里的原话")
             spans.append((b.first_line, b.last_line, n))
         spans.sort()
-        for (a1, b1, n1), (a2, _, n2) in zip(spans, spans[1:]):
+        for (_a1, b1, n1), (a2, _, n2) in zip(spans, spans[1:], strict=False):  # neighbours
             if a2 <= b1:
                 problems.append(f"第 {n1} 段和第 {n2} 段重叠")
         return problems

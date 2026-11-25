@@ -35,7 +35,7 @@ class Rules:
     selling_point_priority: dict[str, list[str]] = field(default_factory=dict)
 
     @classmethod
-    def load(cls) -> "Rules":
+    def load(cls) -> Rules:
         cfg = config()
         r = cfg.get("rules", {})
         return cls(**{k: r[k] for k in cls.__dataclass_fields__ if k in r},

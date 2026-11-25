@@ -150,9 +150,9 @@ class PrepareScriptAgent(Agent[ScriptTaskInput, ScriptAnswer]):
 
     def check(self, inp, out):
         problems = []
-        if inp.script.status == "final" and _norm("".join(l.text for l in out.lines)) != _norm(inp.script.text):
+        if inp.script.status == "final" and _norm("".join(ln.text for ln in out.lines)) != _norm(inp.script.text):
             problems.append("定稿脚本只能拆句，不能增删改字；拼回去必须和原文一致")
-        if long := [l.seq for l in out.lines if len(l.text) > inp.max_line_chars]:
+        if long := [ln.seq for ln in out.lines if len(ln.text) > inp.max_line_chars]:
             problems.append(f"这些句子超过 {inp.max_line_chars} 字，请再拆开：{long}")
         if out.lines[0].role != "opening" or out.lines[-1].role != "ending":
             problems.append("第一句必须是 opening，最后一句必须是 ending")

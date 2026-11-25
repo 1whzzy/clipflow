@@ -15,5 +15,8 @@ langchain-openai==1.8.5               # agents talk to the OpenAI-compatible gat
 langgraph-checkpoint-postgres==3.2.1  # saving run progress to Postgres (needs a database, later)
 psycopg[binary,pool]==3.3.9
 pytest==9.2.0
+ruff==0.14.6                          # lint: python -m ruff check clipflow tests
+fastapi==0.165.0                      # HTTP API (clipflow/api.py)
+uvicorn==0.54.0
 # langsmith comes in with langchain. Leave LANGSMITH_TRACING unset: tracing would send
 # prompts and product data to an outside service.

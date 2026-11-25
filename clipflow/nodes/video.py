@@ -2,8 +2,8 @@
 from langgraph.runtime import Runtime
 
 from ..contracts import (
-    AudioItem, Caption, Decision, Delivery, EndCard, Plan, Product, QCCheck, QCReport, RenderResult, RunRequest, Timeline,
-    VideoItem,
+    AudioItem, Caption, Decision, Delivery, EndCard, Plan, Product, QCCheck, QCReport, RenderResult, RunRequest,
+    Timeline, VideoItem,
 )
 from ..graph.context import RunContext
 from ..graph.state import RunState
@@ -69,7 +69,7 @@ def end_card_lines(product: Product, cta: str) -> list[str]:
         lines.append(f"¥{product.price:g}")
     if cta:
         lines.append(cta)
-    return [l for l in lines if l]
+    return [line for line in lines if line]
 
 
 def build_timeline(state: RunState, runtime: Runtime[RunContext]) -> dict:
@@ -122,7 +122,8 @@ def qc(state: RunState, runtime: Runtime[RunContext]) -> dict:
     if not report.passed:
         out["qc_round"] = state.get("qc_round", 0) + 1
         system_left = out["qc_round"] <= ctx.limits.qc_rounds
-        stuck = [x for x in checks if x.severity == "fail" and (x.fix_by == "admin" or (x.fix_by == "system" and not system_left))]
+        stuck = [x for x in checks if x.severity == "fail"
+                 and (x.fix_by == "admin" or (x.fix_by == "system" and not system_left))]
         if stuck:
             out["status"] = "failed"
             out["flags"] = [f"qc_failed:{x.id}:{x.detail}" for x in stuck]

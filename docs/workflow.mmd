@@ -35,6 +35,7 @@ graph TD;
 	intake --> route_mode;
 	match_assets --> auto_review;
 	prepare_script --> storyboard;
+	qc -.-> __end__;
 	qc -.-> build_timeline;
 	qc -.-> review_video;
 	render --> qc;

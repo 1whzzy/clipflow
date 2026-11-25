@@ -2,7 +2,19 @@
 
 Product information + footage in, a finished vertical selling video out, with two human checkpoints. This document is for reviewing the structure. Business background is in the requirements spec (`短视频带货剪辑助手AI平台V2.0详细需求规格说明书.pdf`).
 
-**Status:** the structure is complete. It runs end to end in tests (fake models and media workers) and on real footage with the LLM relay: the pilot product (trousers), one hour of a real replay → a 1080×1920, 30 fps, −14 LUFS MP4 that passes QC (`python -m clipflow.run`, section 13). A first run on an already-transcribed replay takes about 6 minutes: frame tagging about 2.5 min (44 vision calls, 6 at a time), planning about 2.5 min, word timestamps under 1 min, rendering about 10 s. A cached re-run takes under a minute. Transcribing a new replay adds about 8 min per hour of footage. Not done yet: TTS for material mode (no service chosen), the case library, and the Postgres checkpointer on this machine (it needs Docker). **Open questions for the architect are in section 11.**
+**Status:** the structure is complete and both modes have produced real videos. **Open questions for the architect are in section 12.**
+
+| | How it was checked | Result |
+|---|---|---|
+| Slice mode, real | One hour of a real replay of the pilot product (trousers), LLM relay, `clipflow.run` | 1080×1920, 30 fps, −14.1 LUFS MP4, QC passed |
+| Material mode, real | A final script + 35 product shots; Windows' built-in voice standing in for TTS | 18.5 s MP4, −14.5 LUFS, QC passed |
+| HTTP API, real | `clipflow.api` + plain HTTP: submit → plan pause → video pause → MP4 | Works |
+| Every branch, loop, pause and review-gate rule | 70 tests on fakes built from the real run (desensitized) | Pass |
+| Resume after a failure | Test: a step fails, the cause is fixed, the run continues from that step | Pass |
+| Resume across processes | PostgreSQL 18.7 in Docker. Two separate Python processes ran the project graph with fixture workers and a shared filesystem artifact store. | The first process exited at plan confirmation. The second loaded the same task from PostgreSQL and completed it without re-running ASR. |
+| Lint | `ruff check clipflow tests` | Clean |
+| Speed | Per-step timing in `clipflow.run` | First run on a transcribed replay ~6 min (frame tagging ~2.5, planning ~2.5, word timestamps < 1, render ~10 s); cached re-run < 1 min; a new replay adds ~8 min per hour for transcription |
+| **Not yet** | | Output quality against a golden set (metrics in `clipflow/evaluate.py`, cases not collected yet); the real TTS service; the case library |
 
 ## 1. Three layers
 
@@ -71,7 +83,8 @@ input contract → prompt (six-part outline, versioned file) + model (answers th
 - **The retry loop is plain Python, not a subgraph.** Attempts are seconds apart and cheap, so checkpointing each one buys nothing. What happens after the loop gives up is a workflow decision and lives in the node or graph:
   - `look`, `match_assets`, `auto_review`: continue degraded, flagged.
   - `locate_product`: ask the user.
-  - The rest: the run fails and can be resumed from its last checkpoint.
+  - The rest: the run fails and can be resumed from its last checkpoint (`clipflow.run --thread <id>`; the steps already done are not repeated).
+- **The graph retries transient failures only** (`build.transient`): timeouts, dropped connections, rate limits, 5xx from the relay. A failed agent is not retried again by the graph: it already asked 3 times with its problems listed, and LangGraph's default would have repeated that up to 9 calls in total. Bad input, a missing file or an ffmpeg error fail the same way twice, so they aren't retried either.
 - **Independent calls run in parallel** (`Agent.run_many`, at most `Limits.model_concurrency` = 6 at a time): frame batches, transcript chunks, footage ranking. Results keep input order; one failure doesn't affect the others. This cut frame tagging from 13.1 to 2.4 minutes.
 - **Long inputs are split and sent compactly.** Transcripts and frame tags go as one text line per item, not JSON (about half the tokens). locate_product asks about a 1-hour transcript in chunks of 600 lines, each cached, and merges the blocks.
 - **Agents don't call tools in v1.** Nodes fetch the data and pass it in. That keeps every input inside the cache key, so runs are reproducible. A tool whitelist becomes worth building when an agent has to search, for example locate over a full 4-hour transcript.
@@ -112,36 +125,49 @@ A job can name just the product (`product_id` = 款名). `intake` loads the prod
 
 The interface is `workers/base.py: Catalog` and `AssetLibrary` (`replays_for`, `linked_blocks`, `find`). In the pilot, `products/*.yaml` and the prototype's tags of the product shots stand in for it.
 
-## 8. State, artifacts, checkpoints
+## 8. HTTP API
+
+`clipflow/api.py` (FastAPI) is how a front end drives runs and the two pauses, following the spec's `/api/v1/runs`:
+
+| Call | Does |
+|---|---|
+| `POST /api/v1/runs` | Submit a job (a `RunRequest`) → `202 {run_id}`. The run executes in a background thread. |
+| `GET /api/v1/runs/{id}` | Where it is: `running`, `waiting` (with the pause payload: kind, version, actions, must-fix and waivable findings, last error), `done`, `failed` (with the error and the failed step). |
+| `POST /api/v1/runs/{id}/resume` | Answer the pause. An invalid answer is not an HTTP error: the run pauses again and `GET` shows why. |
+| `POST /api/v1/runs/{id}/continue` | After a technical failure is fixed, run on from the failed step. |
+
+Each run is one LangGraph thread (`thread_id = run_id`), so with the Postgres checkpointer any API process can answer any run. Verified with real workers: submit → plan pause → video pause → MP4, over HTTP.
+
+## 9. State, artifacts, checkpoints
 
 - **State** (`graph/state.py`) holds ids, counters and flags only. Every field has exactly one writer node. The two append-only lists (`flags`, `trace`) have an explicit reducer.
 - **Artifacts** (`storage/artifacts.py`) are immutable JSON files, with the id `<kind>/<content hash>`. Local disk for the pilot; the interface is what an S3-compatible store would implement.
-- **Checkpointer** (`storage/checkpoint.py`): Postgres in production (`docker-compose.yml`, test with `pilot/scripts/check_db.py`), in-memory in tests.
+- **Checkpointer** (`storage/checkpoint.py`): Postgres in production (`docker-compose.yml`), in-memory in tests.
 - **Pauses** use `interrupt()`. A node re-runs from the top on resume, so nothing before the pause has side effects. The one agent call before a pause (`locate_product`) is cached, which makes re-running it free.
 
-## 9. Long-running work
+## 10. Long-running work
 
 ASR (about 8 min per hour of footage), frame sampling, TTS and rendering sit behind the interfaces in `workers/base.py`. Today they run in-process (`workers/pilot.py`, which reuses the prototype's transcription, frame extraction and caption code; rendering goes straight from the Timeline, with per-shot parts cached for partial re-renders). The same interface can later submit jobs to a GPU worker queue and wait, without changing the graph.
 
-## 10. Deliberately left out (for now)
+## 11. Deliberately left out (for now)
 
 | Left out | Why |
 |---|---|
 | Milvus, Elasticsearch, Kafka, MongoDB, Redis, Kubernetes | One person, one workstation. Locating a product works without a vector DB (LLM over the transcript + vision). Add them when a measured need appears, e.g. cross-replay search. |
 | Dual-run and cut-over from Coze | V1.0 never ran in production; nothing to migrate from. |
 | LangSmith tracing | It would send prompts and product data to an outside service. `trace` in state records prompt version, attempts, tokens and cache hits per agent call instead. |
-| API/SSE layer (FastAPI) | Next, once the graph is reviewed. It wraps `compile_app` (`POST /runs`, `/resume`, `/state`). |
+| Event stream (SSE) | The API is poll-based (`GET /runs/{id}`). An event stream for live progress is the next step once a front end exists. |
 | Ingestion (detect new replays and shots, transcribe, tag, index) | A separate pipeline on its own schedule that fills the asset library the graph reads. |
 
-## 11. Open questions for the architect
+## 12. Open questions for the architect
 
 1. **Ingestion boundary.** Is `product id → linked replay blocks → shot candidates` (`AssetLibrary`) the right interface? Who attributes a replay block to a product, and when is that "confirmed"? What happens to a block whose product is unclear: does the run wait for ingestion to resolve it, or does `locate_product` decide and flag it?
 2. **User preferences and cases.** Today `options.focus` and `hook_style` reach quote picking, selling points and the case search; cases are looked up in `storyboard`, after the words are chosen, by category, price, focus and hook style. Should cases also shape the words, as in V2.0's parallel retrieval (cases ∥ script)? That decides what the case library stores and how it is queried.
 3. **Must-fix list.** Is `rules.MUST_FIX` the right line between "a person may waive with a reason" and "must be fixed"?
-4. **TTS** for material mode: which service (on-premise vs. API)?
+4. **TTS** for material mode: which service (on-premise vs. API)? Today `workers/pilot.py: WindowsTTS` (Windows' built-in zh-CN voice) stands in, to prove the path.
 5. **Long jobs.** Keep ASR and rendering in-process for the pilot, or a worker queue from the start?
 
-## 12. Fixes to the V2.0 tech plan carried in this design
+## 13. Fixes to the V2.0 tech plan carried in this design
 
 1. Joins wait for all inputs (`add_edge([a, b], c)`); there are no parallel branches yet.
 2. A reworked Plan replaces the old one (no `merge_shots`).
@@ -149,6 +175,16 @@ ASR (about 8 min per hour of footage), frame sampling, TTS and rendering sit beh
 4. A rework goes back to where the problem was made: content (7/8), storyboard (9) or footage (10). It doesn't always go to the storyboard.
 5. The video stage is mandatory human review. There is no 24-hour auto-approve.
 
-## 13. Running it
+## 14. Running it
 
-See the [README](../README.md) for installation and the CLI entry point. References to tests above describe verification in the development workspace.
+See the [README](../README.md) for local sample setup.
+
+```powershell
+.\.venv\Scripts\python.exe -m clipflow.run jobs\示例裤A-001.yaml
+```
+
+- The local development suite covers both modes, loops, pauses and review-gate rules.
+- `python -m clipflow.evaluate <golden.yaml>` scores stored runs against an editor's choices (found rate, overlap; spec 8.2). Sample: `examples/eval/golden.yaml`.
+- `python -m ruff check clipflow` lints; `python -m clipflow.graph.build` regenerates `docs/workflow.mmd` (a test fails if it is out of date).
+- `python -m clipflow.api` serves the HTTP API on http://127.0.0.1:8000 (interactive docs at `/docs`).
+- `clipflow.run` runs one job on real footage with the LLM relay. Pauses are answered in the terminal; `--auto` is a scripted reviewer for smoke tests.

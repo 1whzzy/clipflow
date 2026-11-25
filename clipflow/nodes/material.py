@@ -31,7 +31,7 @@ def tts(state: RunState, runtime: Runtime[RunContext]) -> dict:
     if len(clips) != len(lines.lines):
         raise RuntimeError(f"TTS returned {len(clips)} clips for {len(lines.lines)} lines")
     # match by line seq, not by position: the plan may have been edited (shots deleted or reordered)
-    by_seq = {line.seq: clip for line, clip in zip(lines.lines, clips)}
+    by_seq = {line.seq: clip for line, clip in zip(lines.lines, clips, strict=True)}
     shots = []
     for s in plan.shots:
         clip = by_seq.get(s.seq)

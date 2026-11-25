@@ -40,5 +40,5 @@ class TimeRange(Part):
     def duration_ms(self) -> int:
         return self.end_ms - self.start_ms
 
-    def overlaps(self, other: "TimeRange") -> bool:
+    def overlaps(self, other: TimeRange) -> bool:
         return self.start_ms < other.end_ms and other.start_ms < self.end_ms

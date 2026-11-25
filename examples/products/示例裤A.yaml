@@ -1,0 +1,20 @@
+# Sample product sheet (desensitized). Real sheets live in products/<款名>.yaml, which is not in the repo.
+# Copy to products/ and edit to try a run. The workflow reads only what is written here: the video
+# never states a price or a material claim that this file doesn't confirm.
+name: 示例裤A                  # 款名, the product id
+anchor: 主播A
+category: 休闲裤
+price: 169                     # live price (元)
+price_verified: false          # set true once confirmed; only then the video may state the price
+verified_claims: []            # material / craft words confirmed for this product; empty = none may be said
+link_no:                       # 直播间链接号, if known
+selling_points: [微喇裤型, 轻薄, 显瘦]
+colors: [黑色, 碳灰]
+sizes: [S, M, L, XL]
+aliases: []                    # how ASR writes the name, after the first transcript
+
+# Footage (paths relative to the repo root)
+replays:
+  - file: material/demo/live_part2.mp4
+product_shots:
+  - material/示例裤A/碳灰/
