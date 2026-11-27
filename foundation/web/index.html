@@ -4,10 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>智能工作平台</title>
-  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/app.css?v=feishu-login">
 </head>
 <body>
-  <div class="app-layout" id="layout">
+  <main class="login-page" id="login" hidden>
+    <section class="login-card" aria-labelledby="login-title">
+      <span class="brand-logo" aria-hidden="true">智</span>
+      <h1 id="login-title">智能工作平台</h1>
+      <p class="muted" id="login-description">请用手机飞书扫一扫，使用公司账号登录。</p>
+      <div id="feishu-qr"></div>
+      <p class="small" role="status" id="login-message"></p>
+      <div class="login-actions">
+        <button type="button" class="ghost" id="refresh-qr">刷新二维码</button>
+        <a id="feishu-open" hidden rel="noreferrer">前往飞书登录</a>
+        <a id="login-back" href="/" hidden>返回工作台</a>
+      </div>
+    </section>
+  </main>
+  <div class="app-layout" id="layout" hidden>
     <aside class="sider" aria-label="导航">
       <div class="sidebar-brand">
         <a class="brand-link" href="#/" aria-label="首页">
@@ -35,11 +49,13 @@
           <span class="avatar" id="avatar">?</span>
           <input id="me" placeholder="你的名字（审核署名）" maxlength="40" autocomplete="off">
         </label>
+        <a class="small login-setup" href="/?login=setup" id="login-setup" hidden>飞书登录未配置</a>
+        <button type="button" class="ghost" id="logout" hidden>退出登录</button>
       </div>
     </aside>
     <main id="app-router-view"><div id="app"><p class="muted page-pad">加载中…</p></div></main>
   </div>
   <div id="toast" hidden></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=feishu-login"></script>
 </body>
 </html>

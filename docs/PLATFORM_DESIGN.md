@@ -1,6 +1,6 @@
 # Base platform, phase 1: design draft
 
-Status: draft for architect review, 2026-11-26. Phases 1 and 2 (§12) are built: `foundation/`, `workflows/echo.py`, `workflows/clip.py`, `tests/test_foundation.py`, `tests/test_clip_workflow.py`. Phase 3's first part, the workbench pages (`foundation/web/`, served by the API), is built. The second workflow, `report` (§6), is built and the platform suite runs unchanged on `echo`, `report` and `clip` (`tests/test_platform_suite.py`). Phase 4, material intake (§14), is built and ran on the pilot's material. Uploads and recovery from a database restart (§15), worker presence with a health page (§16), and restarts, backups and health checks (§17), are built. The workbench now looks like Yuxi's web client (each task as a conversation with the agent); a workflow may name its tasks for lists with an optional `title(input)`. The site opens on the platform's home; apps (`registry.APPS`: workflows + a module's pages) are what people see, video editing being one of them. Login and access control wait until there is staff data. Chinese version: [PLATFORM_DESIGN.zh.md](PLATFORM_DESIGN.zh.md).
+Status: draft for architect review, 2026-11-26. Phases 1 and 2 (§12) are built: `foundation/`, `workflows/echo.py`, `workflows/clip.py`, `tests/test_foundation.py`, `tests/test_clip_workflow.py`. Phase 3's first part, the workbench pages (`foundation/web/`, served by the API), is built. The second workflow, `report` (§6), is built and the platform suite runs unchanged on `echo`, `report` and `clip` (`tests/test_platform_suite.py`). Phase 4, material intake (§14), is built and ran on the pilot's material. Uploads and recovery from a database restart (§15), worker presence with a health page (§16), and restarts, backups and health checks (§17), are built. The workbench now looks like Yuxi's web client (each task as a conversation with the agent); a workflow may name its tasks for lists with an optional `title(input)`. The site opens on the platform's home; apps (`registry.APPS`: workflows + a module's pages) are what people see, video editing being one of them. Feishu QR sign-in is implemented for a shared employee pilot and needs company app configuration. Per-resource authorization remains a separate step. Chinese version: [PLATFORM_DESIGN.zh.md](PLATFORM_DESIGN.zh.md).
 
 The platform runs **workflows** as **tasks**. It owns the parts every workflow needs: registering
 workflows, recording tasks, handing them to workers, pausing for a person, resuming, and delivering
@@ -464,8 +464,9 @@ bad_version`) instead of running old state on new code. The schema is applied by
 | `POST /api/v1/tasks/{id}/cancel` | sets `cancel_requested`; pending/waiting cancel at once |
 | `GET  /api/v1/artifacts/{id}` | download, after an access check |
 
-Login and per-resource access arrive in phase 3 with the workbench; until then `created_by` is
-recorded and the API listens on localhost only.
+With Feishu sign-in enabled, the server checks the company tenant and uses the signed-in employee
+for task and review attribution. The API listens on localhost and can sit behind a company HTTPS
+proxy. Pilot members share workflow resources.
 
 ## 11. Tests
 

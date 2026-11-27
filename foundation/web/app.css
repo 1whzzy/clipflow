@@ -397,3 +397,19 @@ section { margin-bottom: 26px; }
 .crumb-sep { color: var(--gray-300); font-weight: 400; }
 .crumb-icon { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--main-40);
   color: var(--main-700); }
+
+#layout[hidden], #login[hidden], #logout[hidden] { display: none; }
+.login-page { min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+.login-card { width: min(100%, 400px); text-align: center; padding: 36px 24px; border: 1px solid var(--gray-200); border-radius: 24px;
+  background: var(--gray-0); }
+.login-card .brand-logo { margin-inline: auto; width: 44px; height: 44px; font-size: 18px; border-radius: 12px; }
+.login-card h1 { margin: 16px 0 4px; font-size: 22px; }
+.login-card p { margin: 6px 0; }
+#feishu-qr { min-height: 250px; display: grid; place-items: center; }
+#feishu-qr[hidden], #refresh-qr[hidden] { display: none; }
+#feishu-qr iframe { border: 0; max-width: 100%; }
+.login-actions { display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 16px; }
+
+#logout { width: 100%; margin-top: 3px; }
+.login-setup { display: block; padding: 4px; }
+.login-setup[hidden] { display: none; }

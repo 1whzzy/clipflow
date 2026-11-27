@@ -78,6 +78,22 @@ clip task (slice or material mode), and a task page with progress, the review sc
 
 Any other workflow gets a new-task form drawn from its input model and the generic review pages.
 
+### 飞书扫码登录
+
+1. 在飞书开放平台创建企业自建应用，开启网页应用，将工作台地址设为员工能访问的 HTTPS 地址。
+2. 在「安全设置 → 重定向 URL」登记该地址加上 `/api/v1/auth/feishu/callback`。发布应用并把可用范围设为参与试点的员工。
+3. 在项目的本机 `.env` 填写 `FOUNDATION_FEISHU_APP_ID`、`FOUNDATION_FEISHU_APP_SECRET`、
+   `FOUNDATION_FEISHU_TENANT_KEY` 和 `FOUNDATION_FEISHU_REDIRECT_URI`。回调地址须与飞书登记的地址一致。
+4. 执行 `python -m foundation.db migrate`，重启工作台 API。服务继续监听本机，员工通过公司 HTTPS 反向代理访问该服务。
+   验收时用与回调同源的网址打开工作台，手机飞书扫码确认。仅本机联调时可配置 HTTP 回环地址，前提是飞书后台接受该地址。
+
+[飞书二维码 SDK 接入文档](https://open.feishu.cn/document/common-capabilities/sso/web-application-sso/qr-sdk-documentation)
+
+登录会话有效期为 8 小时，退出后立即失效。任务、审核和上传的署名使用飞书姓名。已登录的试点员工共享任务、素材和成片，
+适用于同一组内协作，部门、角色和逐条资源授权需单独配置。当前工作流表单还包括服务器本地路径入口，
+部署给试点人员前需确认可访问的素材目录和服务进程的文件权限。
+四项飞书配置全空时，工作台保留原有的本机调试方式。
+
 ## Material library (phase 4)
 
 ```powershell

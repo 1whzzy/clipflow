@@ -7,8 +7,7 @@ A waiting task shows its open question in `waiting_for`; answer it with
 `POST /tasks/{id}/decisions {waitpoint_id, body}`. Answering an old question gives 409 with what is
 open now; an answer that doesn't fit the question gives 422 and the question stays open.
 
-Login and per-resource access come with the workbench (phase 3); until then the API listens on
-localhost only.
+Feishu sign-in protects the shared workbench when configured. The API listens on localhost.
 """
 from datetime import datetime
 
@@ -21,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .artifacts import LocalStorage
+from .auth import FeishuSettings, actor, mount_login, scoped_request_id
 from .contracts import upload_refs
 from .ops import CheckRunner, Ops
 from .registry import APPS, Registry, UnknownWorkflow, check_decision
@@ -101,12 +101,14 @@ def task_view(row: dict, artifacts: list[dict] | None = None, waiting_for: dict 
 
 
 def create_app(repo: TaskRepository, registry: Registry, storage: LocalStorage, modules: dict | None = None,
-               checks: CheckRunner | None = None, platform: dict | None = None, apps: list[dict] | None = None
+               checks: CheckRunner | None = None, platform: dict | None = None, apps: list[dict] | None = None,
+               feishu: FeishuSettings | None = None
                ) -> FastAPI:
     """`modules`: name → APIRouter, a business module's own pages' API, served at /api/v1/<name>/.
     `checks`: the health checks the 运行状态 page shows (disk space, the model gateway …)."""
     api = FastAPI(title="foundation", version="0.1",
                   description="Runs registered workflows as tasks: queue, workers, status, files.")
+    mount_login(api, repo.pool, feishu)
     uploads = Uploads(repo.pool, storage)
     platform = platform or {"name": "智能工作平台", "tagline": ""}
     apps = APPS if apps is None else apps
@@ -146,7 +148,7 @@ def create_app(repo: TaskRepository, registry: Registry, storage: LocalStorage, 
         return {"platform": platform, "apps": out}
 
     @api.post("/api/v1/tasks", status_code=202)
-    def submit(body: SubmitBody):
+    def submit(body: SubmitBody, request: Request):
         try:
             wf = registry.load(body.workflow_type)
             inp = wf.input_model.model_validate(body.input)
@@ -162,8 +164,10 @@ def create_app(repo: TaskRepository, registry: Registry, storage: LocalStorage, 
             except Conflict as e:
                 raise HTTPException(422, str(e)) from None
         try:
-            row, created = repo.submit(wf.type, wf.version, inp.model_dump(mode="json"), created_by=body.created_by,
-                                       client_request_id=body.client_request_id, priority=body.priority)
+            row, created = repo.submit(wf.type, wf.version, inp.model_dump(mode="json"),
+                                       created_by=actor(request, body.created_by),
+                                       client_request_id=scoped_request_id(request, body.client_request_id),
+                                       priority=body.priority)
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
         return {"task_id": row["id"], "status": row["status"], "created": created}
@@ -191,15 +195,15 @@ def create_app(repo: TaskRepository, registry: Registry, storage: LocalStorage, 
         return [waitpoint_view(w, previews[w["id"]]) for w in rows]
 
     @api.post("/api/v1/tasks/{task_id}/decisions", status_code=202)
-    def decide(task_id: str, d: DecisionBody):
+    def decide(task_id: str, d: DecisionBody, request: Request):
         row = get_task(task_id)
         try:
             wf = registry.load(row["workflow_type"], row["workflow_version"])
         except LookupError as e:
             raise HTTPException(409, str(e)) from None
         try:
-            decision, created = repo.decide(task_id, d.waitpoint_id, d.body, by=d.by,
-                                            client_request_id=d.client_request_id,
+            decision, created = repo.decide(task_id, d.waitpoint_id, d.body, by=actor(request, d.by),
+                                            client_request_id=scoped_request_id(request, d.client_request_id),
                                             check=lambda wp, body: check_decision(wf, wp, body))
         except StaleDecision as e:
             raise HTTPException(409, {"message": str(e), "status": e.status,
@@ -216,18 +220,18 @@ def create_app(repo: TaskRepository, registry: Registry, storage: LocalStorage, 
         return [{**e, "at": e["at"].isoformat()} for e in repo.events(task_id)]
 
     @api.post("/api/v1/tasks/{task_id}/retry", status_code=202)
-    def retry(task_id: str, body: ByBody | None = None):
+    def retry(task_id: str, request: Request, body: ByBody | None = None):
         get_task(task_id)
         try:
-            return task_view(repo.retry(task_id, by=body.by if body else ""))
+            return task_view(repo.retry(task_id, by=actor(request, body.by if body else "")))
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
 
     @api.post("/api/v1/tasks/{task_id}/cancel", status_code=202)
-    def cancel(task_id: str, body: ByBody | None = None):
+    def cancel(task_id: str, request: Request, body: ByBody | None = None):
         get_task(task_id)
         try:
-            return task_view(repo.request_cancel(task_id, by=body.by if body else ""))
+            return task_view(repo.request_cancel(task_id, by=actor(request, body.by if body else "")))
         except Conflict as e:
             raise HTTPException(409, str(e)) from None
 
@@ -256,9 +260,9 @@ def create_app(repo: TaskRepository, registry: Registry, storage: LocalStorage, 
     # ---- uploads: resumable, in chunks (uploads.py) ----
 
     @api.post("/api/v1/uploads", status_code=201)
-    def start_upload(body: UploadBody):
+    def start_upload(body: UploadBody, request: Request):
         try:
-            row = uploads.create(body.name, body.bytes, body.mime, body.created_by)
+            row = uploads.create(body.name, body.bytes, body.mime, actor(request, body.created_by))
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
         return {**_plain(row, UPLOAD), "chunk_bytes": CHUNK_BYTES}
@@ -296,9 +300,10 @@ def main() -> None:  # pragma: no cover
 
     from .db import check, open_pool
     from .dispatch.postgres import PostgresDispatcher
-    from .settings import PlatformSettings
+    from .settings import PlatformSettings, read_env
 
     s = PlatformSettings.load()
+    feishu = FeishuSettings.from_env(read_env())
     pool = open_pool(s.database_url, s.schema)
     check(pool)
     repo = TaskRepository(pool, PostgresDispatcher(s.database_url, s.schema))
@@ -307,7 +312,8 @@ def main() -> None:  # pragma: no cover
 
     checks = CheckRunner(load_checks(), storage_root=s.files_dir).start()
     uvicorn.run(create_app(repo, Registry(), LocalStorage(s.files_dir), load_modules(), checks,
-                           {"name": s.brand, "tagline": s.tagline}), host="127.0.0.1", port=s.api_port)
+                           {"name": s.brand, "tagline": s.tagline}, feishu=feishu),
+                host="127.0.0.1", port=s.api_port)
 
 
 if __name__ == "__main__":

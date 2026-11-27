@@ -1,6 +1,6 @@
 # 基础平台第一阶段：设计草案
 
-状态：供架构师评审的草案，2026-11-26。第一、二阶段（第 12 节）已实现：`foundation/`、`workflows/echo.py`、`workflows/clip.py`、`tests/test_foundation.py`、`tests/test_clip_workflow.py`。第三阶段的第一部分，工作台页面（`foundation/web/`，由 API 提供），已实现。第二个工作流 `report`（第 6 节）已实现，平台测试套件不做修改，对 `echo`、`report`、`clip` 都能跑通（`tests/test_platform_suite.py`）。第四阶段素材入库（第 14 节）已实现，并在试点素材上跑过。上传和数据库重启后的恢复（第 15 节）、执行进程报到和运行状态页（第 16 节）、自动重启、备份和健康检查（第 17 节）已实现。工作台的外观改成了 Yuxi 网页端的样子（每个任务显示为和智能体的对话）；工作流可以提供可选的 `title(input)`，给列表里的任务起个短名字。网站打开的是平台首页；用户看到的是“应用”（`registry.APPS`：若干工作流加模块页面），带货视频剪辑是其中之一。登录和访问控制等有了员工数据再做。英文版：[PLATFORM_DESIGN.md](PLATFORM_DESIGN.md)。
+状态：供架构师评审的草案，2026-11-26。第一、二阶段（第 12 节）已实现：`foundation/`、`workflows/echo.py`、`workflows/clip.py`、`tests/test_foundation.py`、`tests/test_clip_workflow.py`。第三阶段的第一部分，工作台页面（`foundation/web/`，由 API 提供），已实现。第二个工作流 `report`（第 6 节）已实现，平台测试套件不做修改，对 `echo`、`report`、`clip` 都能跑通（`tests/test_platform_suite.py`）。第四阶段素材入库（第 14 节）已实现，并在试点素材上跑过。上传和数据库重启后的恢复（第 15 节）、执行进程报到和运行状态页（第 16 节）、自动重启、备份和健康检查（第 17 节）已实现。工作台的外观改成了 Yuxi 网页端的样子（每个任务显示为和智能体的对话）；工作流可以提供可选的 `title(input)`，给列表里的任务起个短名字。网站打开的是平台首页；用户看到的是“应用”（`registry.APPS`：若干工作流加模块页面），带货视频剪辑是其中之一。已接入飞书扫码登录，企业自建应用配置完成后可联调。细粒度资源权限待单独接入。英文版：[PLATFORM_DESIGN.md](PLATFORM_DESIGN.md)。
 
 平台以**任务**的形式运行**工作流**。平台负责每个工作流都需要的部分：注册工作流、登记任务、把任务交给
 Worker、暂停等人确认、续跑、交付文件。工作流只负责自己的业务逻辑。Clipflow（商品 + 素材 → MP4）是第一个
@@ -430,7 +430,7 @@ artifacts(id text pk, task_id, kind text, storage text, location text,
 | `POST /api/v1/tasks/{id}/cancel` | 设置 `cancel_requested`；pending / waiting 立即取消 |
 | `GET  /api/v1/artifacts/{id}` | 检查权限后下载 |
 
-登录和按资源的访问控制在第三阶段随工作台一起做；在那之前记录 `created_by`，API 只监听本机。
+启用飞书扫码登录后，平台校验企业租户，任务和审核以登录员工的飞书姓名署名。API 继续监听本机，员工可通过公司 HTTPS 代理访问。试点员工共享任务和素材。
 
 ## 11. 测试
 

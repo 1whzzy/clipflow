@@ -119,6 +119,7 @@ async function api(method, path, body) {
   const r = await fetch("/api/v1" + path, { method, headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined });
   const data = r.headers.get("content-type")?.includes("json") ? await r.json() : null;
+  if (r.status === 401 && employee) location.reload();
   if (!r.ok) throw { status: r.status, detail: data?.detail ?? data ?? r.statusText };
   return data;
 }
@@ -1070,25 +1071,132 @@ async function statusPage() {
 
 const meInput = document.getElementById("me");
 const avatar = () => { document.getElementById("avatar").textContent = (me() || "?").slice(0, 1).toUpperCase(); };
-try { meInput.value = localStorage.getItem("me") || ""; } catch { /* private mode */ }
-meInput.oninput = () => { try { localStorage.setItem("me", meInput.value.trim()); } catch { /* ignore */ } avatar(); };
-avatar();
 const layout = document.getElementById("layout");
-try { layout.classList.toggle("collapsed", localStorage.getItem("collapsed") === "1"); } catch { /* ignore */ }
-document.getElementById("collapse").onclick = () => {
-  layout.classList.toggle("collapsed");
-  try { localStorage.setItem("collapsed", layout.classList.contains("collapsed") ? "1" : "0"); } catch { /* ignore */ }
+let employee = null;
+let qrListener;
+let qrSdk;
+const feishuSdk = "https://lf-package-cn.feishucdn.com/obj/feishu-static/lark/passport/qrcode/LarkSSOSDKWebQRCode-1.0.3.js";
+const loginMessage = document.getElementById("login-message");
+const loginHelp = {
+  expired: "二维码已失效，请刷新后重新扫码。",
+  cancelled: "你已取消授权，可以重新扫码。",
+  tenant: "这个飞书账号不属于本平台绑定的企业。",
+  failed: "飞书登录失败，请重试。持续失败时请联系管理员。",
 };
-paintIcons();
-window.addEventListener("hashchange", route);
-loadLabels().then(() => {
+
+function loadQrSdk() {
+  if (qrSdk) return qrSdk;
+  qrSdk = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = feishuSdk;
+    script.integrity = "sha384-cgHU8YSTJ/hj6owBq6pQekwkgTa+beNFQ7I5zWqs61hLt37lo743p3fzuKnn/nJ3";
+    script.crossOrigin = "anonymous";
+    script.referrerPolicy = "no-referrer";
+    script.onload = () => typeof window.QRLogin === "function" ? resolve() : reject(new Error("SDK unavailable"));
+    script.onerror = () => reject(new Error("SDK unavailable"));
+    document.head.append(script);
+  }).catch(err => { qrSdk = null; throw err; });
+  return qrSdk;
+}
+
+async function showQr(message = "") {
+  const box = document.getElementById("feishu-qr");
+  const refresh = document.getElementById("refresh-qr");
+  const fallback = document.getElementById("feishu-open");
+  if (qrListener) window.removeEventListener("message", qrListener);
+  refresh.disabled = true;
+  fallback.hidden = true;
+  box.replaceChildren();
+  loginMessage.textContent = message || "正在加载二维码…";
+  try {
+    const { authorize_url } = await api("POST", "/auth/feishu/start");
+    const target = new URL(authorize_url);
+    fallback.href = target.href;
+    fallback.hidden = false;
+    await loadQrSdk();
+    const qr = window.QRLogin({ id: box.id, goto: target.href, width: "250", height: "250" });
+    qrListener = event => {
+      const frame = box.querySelector("iframe");
+      if (!frame || event.source !== frame.contentWindow || !qr.matchOrigin(event.origin)
+          || !qr.matchData(event.data) || typeof event.data.tmp_code !== "string" || !event.data.tmp_code) return;
+      window.removeEventListener("message", qrListener);
+      target.searchParams.set("tmp_code", event.data.tmp_code);
+      location.assign(target.href);
+    };
+    window.addEventListener("message", qrListener);
+    loginMessage.textContent = message;
+  } catch {
+    loginMessage.textContent = "二维码加载失败，请刷新重试。";
+  } finally {
+    refresh.disabled = false;
+  }
+}
+
+async function startWorkbench() {
+  const session = await api("GET", "/auth/session");
+  employee = session.user;
+  const loginStatus = new URLSearchParams(location.search).get("login");
+  if (!session.enabled && loginStatus === "setup") {
+    document.getElementById("login").hidden = false;
+    document.getElementById("login-description").textContent = "飞书扫码登录尚未启用。";
+    loginMessage.textContent = "需由管理员配置企业飞书应用及回调地址，工作台目前可在本机使用。";
+    document.getElementById("feishu-qr").hidden = true;
+    document.getElementById("refresh-qr").hidden = true;
+    document.getElementById("login-back").hidden = false;
+    return;
+  }
+  if (session.enabled && !employee) {
+    document.getElementById("login").hidden = false;
+    if (loginStatus) history.replaceState(null, "", "/" + location.hash);
+    document.getElementById("refresh-qr").onclick = () => showQr();
+    await showQr(loginHelp[loginStatus] || "");
+    return;
+  }
+  if (employee) {
+    meInput.value = employee.name;
+    meInput.readOnly = true;
+    const logout = document.getElementById("logout");
+    logout.hidden = false;
+    logout.onclick = async () => {
+      try {
+        await api("POST", "/auth/logout");
+        location.assign("/");
+      } catch (e) { toast(problem(e), true); }
+    };
+  } else {
+    document.getElementById("login-setup").hidden = false;
+    try { meInput.value = localStorage.getItem("me") || ""; } catch { /* private mode */ }
+    meInput.oninput = () => {
+      try { localStorage.setItem("me", meInput.value.trim()); } catch { /* ignore */ }
+      avatar();
+    };
+  }
+  avatar();
+  try { layout.classList.toggle("collapsed", localStorage.getItem("collapsed") === "1"); } catch { /* ignore */ }
+  document.getElementById("collapse").onclick = () => {
+    layout.classList.toggle("collapsed");
+    try { localStorage.setItem("collapsed", layout.classList.contains("collapsed") ? "1" : "0"); } catch { /* ignore */ }
+  };
+  layout.hidden = false;
+  paintIcons();
+  window.addEventListener("hashchange", route);
+  await loadLabels();
   document.getElementById("brand-name").textContent = PLATFORM.name;
   document.getElementById("brand-logo").textContent = PLATFORM.name.slice(0, 1);
   document.title = PLATFORM.name;
   drawApps();
   refreshSessions();
   route();
+  refreshHealth();
+  setInterval(refreshHealth, 15000);
+  setInterval(refreshSessions, 8000);
+}
+
+window.addEventListener("pageshow", event => { if (event.persisted) location.reload(); });
+startWorkbench().catch(() => {
+  document.getElementById("login").hidden = false;
+  loginMessage.textContent = "工作台服务暂时无法连接。";
+  const refresh = document.getElementById("refresh-qr");
+  refresh.textContent = "重新连接";
+  refresh.onclick = () => location.reload();
 });
-refreshHealth();
-setInterval(refreshHealth, 15000);
-setInterval(refreshSessions, 8000);
