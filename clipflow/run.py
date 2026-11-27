@@ -33,8 +33,22 @@ from .workers.pilot import NoCases, PilotASR, PilotFrames, PilotLibrary, PilotRe
 def real_context(settings: Settings, store: str | None = None) -> RunContext:
     """The workers for this workstation: the LLM relay, the prototype's ASR/frames/render, Windows TTS."""
     return RunContext(store=FileStore(store or settings.artifacts_dir), models=RelayModels(settings), asr=PilotASR(),
-                      frames=PilotFrames(), tts=WindowsTTS(), renderer=PilotRenderer(), library=PilotLibrary(),
+                      frames=PilotFrames(), tts=WindowsTTS(), renderer=PilotRenderer(), library=library_for(settings),
                       cases=NoCases(), catalog=YamlCatalog())
+
+
+def library_for(settings: Settings):
+    """The material library in Postgres (filled by the ingest workflow), falling back to the pilot's
+    product sheets and shot tags for whatever it doesn't know. Without the database or its tables,
+    the pilot library alone, as before phase 4."""
+    if settings.database_url:
+        try:
+            from .library import LibraryStore, PostgresLibrary, library_schema
+
+            return PostgresLibrary(LibraryStore.open(settings.database_url, library_schema()), PilotLibrary())
+        except Exception as e:  # noqa: BLE001
+            print(f"material library not available ({type(e).__name__}: {e}); using the pilot library")
+    return PilotLibrary()
 
 
 def reachable_db(settings: Settings) -> str | None:

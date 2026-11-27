@@ -33,6 +33,8 @@ class QuoteRules(BaseModel):
     max_support: int = 2  # SOP 2.2.2: one main selling point and at most two supporting ones
     max_per_point: int = 2  # the same point at most twice
     live_room_phrases: list[str] = []  # lines that only make sense inside the live room
+    # the anchor's own numbering (这是第一点): cut out of its list, it points at a list the viewer never hears
+    list_markers: list[str] = []
 
 
 class SelectInput(BaseModel):
@@ -106,6 +108,10 @@ class SelectQuotesAgent(Agent[SelectInput, SelectAnswer]):
             for w in r.live_room_phrases:
                 if w in text:
                     problems.append(f"第 {q.seq} 段「{w}」只在直播间里成立，短视频观众听不懂，换一句")
+            for w in r.list_markers:
+                if w in text:
+                    problems.append(f"第 {q.seq} 段带着主播的编号「{w}」，剪出来观众听不到前后几点："
+                                    "选到编号之前为止，或换一句")
             if (ms := quote_ms(inp, q)) < r.min_quote_ms:
                 problems.append(f"第 {q.seq} 段只有 {ms / 1000:.1f} 秒，太碎；至少 {r.min_quote_ms / 1000:.1f} 秒，"
                                 "可以连同前后句一起选")

@@ -11,12 +11,23 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 
 @contextmanager
-def open_checkpointer(database_url: str | None) -> Iterator[BaseCheckpointSaver]:
+def open_checkpointer(database_url: str | None, name: str = "clipflow-checkpoints") -> Iterator[BaseCheckpointSaver]:
+    """On a small pool that checks each connection before use: a long-lived worker survives a
+    database restart (the step running at that moment fails and can be retried; later ones work).
+    `name` is the connections' application_name."""
     if not database_url:
         yield InMemorySaver()
         return
     from langgraph.checkpoint.postgres import PostgresSaver
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
 
-    with PostgresSaver.from_conn_string(database_url) as saver:
+    pool = ConnectionPool(database_url, min_size=1, max_size=4, open=True, check=ConnectionPool.check_connection,
+                          kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row,
+                                  "application_name": name})
+    try:
+        saver = PostgresSaver(pool)
         saver.setup()  # creates the checkpoint tables; safe to run again
         yield saver
+    finally:
+        pool.close()

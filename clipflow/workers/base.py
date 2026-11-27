@@ -48,6 +48,10 @@ class Catalog(Protocol):
         """Raises KeyError for an unknown product."""
         ...
 
+    def ids(self) -> list[str]:
+        """Every product id (款名) in the catalog."""
+        ...
+
 
 class AssetLibrary(Protocol):
     """What ingestion (outside this graph) has filed: replays and product footage, with tags.

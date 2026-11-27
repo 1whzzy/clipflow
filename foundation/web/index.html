@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智能工作平台</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app-layout" id="layout">
+    <aside class="sider" aria-label="导航">
+      <div class="sidebar-brand">
+        <a class="brand-link" href="#/" aria-label="首页">
+          <span class="brand-logo" id="brand-logo">智</span><span class="brand-name" id="brand-name">智能工作平台</span>
+        </a>
+        <button type="button" class="sidebar-header-action" id="collapse" aria-label="折叠侧边栏" title="折叠侧边栏"
+          data-icon="panel"></button>
+      </div>
+      <nav class="nav">
+        <a class="nav-item primary-action" href="#/new" data-nav="new" title="新建任务">
+          <i data-icon="pen"></i><span class="nav-text">新建任务</span></a>
+        <a class="nav-item" href="#/" data-nav="home" title="首页"><i data-icon="home"></i><span class="nav-text">首页</span></a>
+        <a class="nav-item" href="#/tasks" data-nav="tasks" title="所有任务"><i data-icon="list"></i><span class="nav-text">任务</span></a>
+        <a class="nav-item" href="#/status" data-nav="status" title="运行状态">
+          <i data-icon="activity"></i><span class="nav-text">运行状态</span></a>
+      </nav>
+      <div class="nav-section">应用</div>
+      <nav class="nav app-nav" id="app-nav" aria-label="应用"></nav>
+      <div class="fill">
+        <div class="session-section-title">最近任务</div>
+        <div class="session-list" id="sessions"></div>
+      </div>
+      <div class="foo">
+        <label class="user-info" title="审核记录里的署名">
+          <span class="avatar" id="avatar">?</span>
+          <input id="me" placeholder="你的名字（审核署名）" maxlength="40" autocomplete="off">
+        </label>
+      </div>
+    </aside>
+    <main id="app-router-view"><div id="app"><p class="muted page-pad">加载中…</p></div></main>
+  </div>
+  <div id="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

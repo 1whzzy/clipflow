@@ -17,8 +17,11 @@ from .settings import config
 # compliance agent's style findings) a reviewer may accept, with a reason.
 MUST_FIX = {
     "rule.banned_word", "rule.price_unverified", "rule.price_mismatch", "rule.unverified_claim",
-    "rule.caption_edit",
+    "rule.caption_edit", "rule.too_short",
 }
+# A plan under this share of the shortest allowed length isn't a video: the replay simply doesn't
+# talk about the product long enough (2026-11-27: a 4 s "video" from a replay part with one mention).
+TOO_SHORT_SHARE = 0.5
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class Rules:
     max_quotes: int = 8
     max_per_point: int = 2
     live_room_phrases: list[str] = field(default_factory=list)
+    list_markers: list[str] = field(default_factory=list)
     selling_point_priority: dict[str, list[str]] = field(default_factory=dict)
 
     @classmethod
@@ -109,6 +113,14 @@ def plan_rule_findings(plan: Plan, product: Product, rules: Rules) -> list[Findi
         if run > rules.max_same_shot_type_in_a_row:
             out.append(Finding(rule_id="rule.shot_variety", severity="fix", seq=shot.seq,
                                detail=f"连续 {run} 个 {shot.shot_type} 画面"))
+    lo, hi = plan.target_ms
+    if plan.total_ms < lo * TOO_SHORT_SHARE:
+        out.append(Finding(rule_id="rule.too_short", severity="fix", seq=plan.shots[-1].seq, fix_at="content",
+                           detail=f"全片只有 {plan.total_ms / 1000:.1f} 秒，要求 {lo / 1000:.0f}–{hi / 1000:.0f} 秒："
+                                  "素材里这件商品讲得太少，换一场回放或换素材，不能直接出片"))
+    if plan.shots[-1].purpose not in ("ending", "cta"):
+        out.append(Finding(rule_id="rule.no_ending", severity="fix", seq=plan.shots[-1].seq, fix_at="content",
+                           detail="最后一镜不是结尾：成片要以购买理由或号召收尾"))
     for shot in plan.shots:
         if shot.clip is None:
             out.append(Finding(rule_id="rule.missing_footage", severity="note", seq=shot.seq,

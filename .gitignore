@@ -38,3 +38,6 @@ read*.txt
 *.png
 !短视频带货剪辑项目业务说明.docx
 !技术方案V2.0流程图续图.png
+
+# Database backups (python -m foundation.ops backup)
+/backups/

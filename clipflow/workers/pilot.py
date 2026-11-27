@@ -9,7 +9,9 @@ What each adapter reuses from the prototype:
 - Library + references: the prototype's tags of the product shots (pilot/work/_shots/<folder>/vision.json)
   stand in for what ingestion will provide.
 - Renderer: ffmpeg directly from the Timeline (per-shot parts cached → partial re-render), captions
-  as ASS via cues.write_ass, loudness normalised to −14 LUFS.
+  as ASS via cues.write_ass, loudness normalised to −14 LUFS. Every file is written under a temporary
+  name and moved into place when complete (`_writing`), so a crash or two renders at once never leave
+  a half-written shot or video under its real name.
 """
 import hashlib
 import json
@@ -18,6 +20,9 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -112,6 +117,9 @@ class YamlCatalog:
         p = _product_yaml(product_id)
         return Product(**{k: p.get(k) for k in Product.model_fields if p.get(k) is not None})
 
+    def ids(self) -> list[str]:
+        return sorted(p.stem for p in (ROOT / "products").glob("*.yaml"))
+
 
 # prototype shot tags → contract shot types
 SHOT_MAP = {"full_body": "look_full", "lower_body": "detail_fit", "upper_body": "look_half",
@@ -197,6 +205,68 @@ def _run(cmd: list, cwd=None) -> None:
         raise RuntimeError(f"ffmpeg failed ({r.returncode}): {r.stderr[-800:]}")
 
 
+LEFTOVER_S = 24 * 3600  # temporary files from a killed render are swept after a day
+
+
+@contextmanager
+def _writing(out: Path):
+    """Write `out` crash-safely: yield a temporary path next to it; when the block succeeds, move the
+    finished file into place in one step. Under the real name there is only ever a complete file, so
+    a crash or kill mid-write can't leave a half-written shot that the cache would reuse, and a second
+    renderer (an old worker that lost its lease) can't interleave its bytes with ours."""
+    tmp = out.with_name(f".{out.stem}.{os.getpid()}-{uuid.uuid4().hex[:8]}.part{out.suffix}")
+    try:
+        yield tmp
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    _publish(tmp, out)
+
+
+def _publish(tmp: Path, out: Path) -> None:
+    for attempt in range(5):
+        try:
+            os.replace(tmp, out)
+            return
+        except PermissionError:  # Windows: the target is open (being concatenated, measured or downloaded)
+            if out.exists():
+                # Another renderer finished the same file first. Same cache key / same timeline version
+                # means the same content, so theirs is as good as ours.
+                tmp.unlink(missing_ok=True)
+                return
+            time.sleep(0.2 * (attempt + 1))
+    os.replace(tmp, out)
+
+
+def _sweep(folder: Path) -> None:
+    """Remove temporary files left by renders that were killed (they are never read)."""
+    cutoff = time.time() - LEFTOVER_S
+    for p in folder.glob(".*.part.*"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+        except OSError:
+            pass
+
+
+def _playable(path: Path) -> bool:
+    """A cached shot is reused only if ffprobe reads it as a video with a duration. Files written by
+    older code (before `_writing`) may be truncated."""
+    try:
+        info = common.probe(path)
+        return float(info["format"].get("duration", 0)) > 0 and any(
+            s.get("codec_type") == "video" for s in info["streams"])
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _finite(value) -> bool:
+    try:
+        return abs(float(value)) != float("inf")
+    except (TypeError, ValueError):
+        return False
+
+
 def _loudness(path: Path, af: str) -> dict | None:
     """Run ffmpeg's loudnorm in measuring mode over `path`; return its JSON stats (input_i, …)."""
     r = subprocess.run([common.ffmpeg_bin(), "-hide_banner", "-nostats", "-i", str(path), "-af", af, "-f", "null", "-"],
@@ -230,7 +300,9 @@ class PilotRenderer:
                                         sort_keys=True).encode()).hexdigest()[:16]
         out = self.cache / f"{key}.mp4"
         if out.exists():
-            return out, True
+            if _playable(out):
+                return out, True
+            out.unlink(missing_ok=True)  # damaged: render it again
         out.parent.mkdir(parents=True, exist_ok=True)
         dur = (item.out_ms - item.in_ms) / 1000
         cmd = [common.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y"]
@@ -246,14 +318,17 @@ class PilotRenderer:
               f"format=yuv420p,setsar=1,tpad=stop_mode=clone:stop_duration={dur:.3f}[v]")  # hold the last frame
               # if the footage is shorter than the shot (a voice line longer than the clip)
         af = f"[1:a]afade=t=in:d=0.04,afade=t=out:st={max(0.0, dur - 0.06):.3f}:d=0.06,aresample=48000,apad[a]"
-        _run(cmd + ["-filter_complex", f"{vf};{af}", "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}", *enc,
-                    "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", str(out)])
+        with _writing(out) as tmp:
+            _run(cmd + ["-filter_complex", f"{vf};{af}", "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}", *enc,
+                        "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", str(tmp)])
         return out, False
 
     def render(self, timeline: Timeline, previous: RenderResult | None = None) -> RenderResult:
         import cues as cuelib
 
         enc = common.video_encoder_args()
+        if self.cache.exists():
+            _sweep(self.cache)
         audio_at = {a.at_ms: a for a in timeline.audio}
         parts, reused = [], []
         for item in timeline.video:
@@ -275,24 +350,31 @@ class PilotRenderer:
             card = timeline.end_card
             card_cue = {"start": card.start_ms / 1000, "end": card.end_ms / 1000, "lines": card.lines} if card else None
             cuelib.write_ass(Path(tmp) / "captions.ass", cue_list, card_cue)
-            hold = (card.end_ms - card.start_ms) / 1000 if card else 0
+            # the still at the end: whatever the timeline runs past its last shot (the card itself
+            # mostly lies over that shot)
+            video_end = max(v.at_ms + (v.out_ms - v.in_ms) for v in timeline.video)
+            hold = max(0, timeline.duration_ms - video_end) / 1000
             vf = f"tpad=stop_mode=clone:stop_duration={hold},subtitles=captions.ass"
             # Two-pass loudness: measure the padded audio first, then apply the exact correction.
             # One pass guesses on the fly and lands ±1–2 LU off on short clips (−15.2 on a 15 s clip).
             target = "I=-14:TP=-1.5:LRA=11"
             m = _loudness(Path(tmp) / "cut.mp4", f"apad=pad_dur={hold},loudnorm={target}:print_format=json")
             af = f"apad=pad_dur={hold},loudnorm={target}"
-            if m:
+            if m and all(_finite(m.get(k)) for k in ("input_i", "input_tp", "input_lra", "input_thresh")):
+                # silence measures as -inf, which loudnorm refuses as an input: then one pass
                 af += (f":measured_I={m['input_i']}:measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}"
                        f":measured_thresh={m['input_thresh']}:offset={m['target_offset']}:linear=true")
-            _run([common.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y", "-i", "cut.mp4", "-vf", vf, *enc,
-                  "-af", af, "-ar", "48000", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(final)],
-                 cwd=tmp)
+            _sweep(out_dir)
+            with _writing(final) as part:
+                _run([common.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y", "-i", "cut.mp4", "-vf", vf,
+                      *enc, "-af", af, "-ar", "48000", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
+                      str(part.resolve())], cwd=tmp)
+        path = final.relative_to(ROOT) if final.is_relative_to(ROOT) else final
         return RenderResult(run_id=timeline.run_id, timeline_version=timeline.version,
-                            path=str(final.relative_to(ROOT)).replace("\\", "/"), reused_shots=reused)
+                            path=str(path).replace("\\", "/"), reused_shots=reused)
 
     def measure(self, path: str) -> Measured:
-        p = ROOT / path
+        p = Path(path) if Path(path).is_absolute() else ROOT / path
         info = common.probe(p)
         v = next(s for s in info["streams"] if s["codec_type"] == "video")
         num, den = (int(x) for x in v["r_frame_rate"].split("/"))

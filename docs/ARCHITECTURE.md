@@ -11,7 +11,7 @@ Product information + footage in, a finished vertical selling video out, with tw
 | HTTP API, real | `clipflow.api` + plain HTTP: submit → plan pause → video pause → MP4 | Works |
 | Every branch, loop, pause and review-gate rule | 80 tests on fakes built from the real run (desensitized) | Pass |
 | Resume after a failure | Test: a step fails, the cause is fixed, the run continues from that step | Pass |
-| Resume across processes | PostgreSQL 18.7 in Docker. Separate Python processes exercised the project graph with fixture workers and a shared artifact store. | The second process loaded the same checkpoint and completed the task without repeating ASR. |
+| Resume across processes, real | Postgres 18 in Docker: process A runs the real job to the plan pause and exits; process B resumes it by thread id (`--thread`) and finishes it; plus `tests/test_postgres.py` | Works: B ran only the remaining steps (render, QC); nothing before the pause re-ran |
 | Lint | `ruff check clipflow tests` | Clean |
 | Speed | Per-step timing in `clipflow.run` | First run on a transcribed replay ~6 min (frame tagging ~2.5, planning ~2.5, word timestamps < 1, render ~10 s); cached re-run < 1 min; a new replay adds ~8 min per hour for transcription |
 | **Not yet** | | Output quality against a golden set (metrics in `clipflow/evaluate.py`, cases not collected yet); the real TTS service; the case library |
@@ -112,19 +112,22 @@ Banned words, prices, unverified claims, hook-first, shot variety and caption le
 |---|---|
 | Shots of 0.6–1.0 s that sound cut off; 10–13 shots in 30 s | each quote ≥ 1.2 s (`min_quote_ms`), at most 8 quotes |
 | Sizes said three times; 5 selling points | at most 1 main + 2 supporting points, the same point at most twice |
-| The hook a fit claim followed by a size caveat undercuts itself | no hedge after the hook (`opening_hedges`: 只是说, 但是, 不过 …) |
-| The ending 「我们先上这个裤子吧」, 「再开100单」, a reference to an off-screen colleague | no live-room-only lines (`live_room_phrases`); the prompt also excludes people off screen |
+| The hook 「…喇叭裤只是说我现在穿的这个码有点太小了」 undercuts itself | no hedge after the hook (`opening_hedges`: 只是说, 但是, 不过 …) |
+| The ending 「我们先上这个裤子吧」, 「再开100单」, 「旁边同事穿的是黑色」 | no live-room-only lines (`live_room_phrases`); the prompt also excludes people off screen |
 | After those rules: one 13 s stretch repeating 「我正常穿的是M码」 twice; 「你看见了吗」 with nothing to see | each quote ≤ 8 s (`max_quote_ms`); no clause repeated inside a quote; "look" phrases (`deictic`) only where the frames show the item clearly |
 | Middle quotes starting 「而且…」 「然后…」, which sound cut mid-sentence | no quote starts with a connective, not only the first |
+| Acceptance run 2026-11-27: 「…它是发糯的这是第一点」, 「我觉得就是你就是去搭配一些那种…你像这种大派克」 | the anchor's numbering is cut (`list_markers`); more rambling fillers in `hesitations` |
+
+**Video stage, from the same acceptance run.** The end card used to follow the last shot as a 3 s frozen, silent frame; it now lies over the last 2.2 s of the final shot (the anchor still speaking) with only a 0.8 s still after it (`END_CARD_MS`, `END_HOLD_MS` in `nodes/video.py`). For products worn below the waist (category containing 裤, 裙, 鞋, 袜, 靴) captions always go at the top, so they never cover the product (`caption_position`). Replay ingestion now also fetches word timestamps for the selling stretches it files, so a later clip run's `refine_words` step finds them cached (130 s → under 1 s on the acceptance job).
 
 Measured on the same job (same replay, two cold runs before, then after each change):
 
 | | Before (2 runs) | After (last runs) |
 |---|---|---|
-| Hook | a fit claim followed by a size caveat both times | a standalone line describing the fit (1.4 s) |
-| Ending | 「我们先上这个裤子吧」 both times | a fit and styling close |
+| Hook | 「…喇叭裤只是说我现在穿的这个码有点太小了」 both times | 「不是特别贴腿的喇叭裤」 (1.4 s) |
+| Ending | 「我们先上这个裤子吧」 both times | 「…超级巨无霸显瘦，一整套都可以穿」 |
 | Quotes in ~30 s | 10–13, several under 1.2 s | 6, from 1.4 to 7.3 s |
-| Live-room lines, people off screen | 「再开100单」, a colleague’s name | none |
+| Live-room lines, people off screen | 「再开100单」, 「旁边同事」 | none |
 | First review: must-fix items | 7–8, so every plan was reworked | 1–3 real guarantees (「不会有任何鼓鼓囊塞」); none after one rework |
 
 **Banned words: ordinals are not claims, and a hit is reworked, not fatal.** A real run was stopped by 「第一」 in 「这是第一点」 ("this is the first point"). Ordinals and counting (`banned_word_exceptions`: 第一点, 第一个, 第一次 …) are now excluded. A real banned word is must-fix, not an immediate stop: in slice mode the system picked that line, so one rework can pick another; after that it blocks approval and delivery until a person fixes it. `hard_fail` remains for findings no rework can fix (`block` severity, e.g. a category the platform doesn't allow); no current rule produces one.

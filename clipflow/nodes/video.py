@@ -11,8 +11,17 @@ from ._human import ask, blocking_issues, waivable_findings
 from ._util import load, request
 from .plan import apply_edits
 
-END_CARD_MS = 3000
+END_CARD_MS = 3000  # how long the end card is on screen: over the last shot, while the anchor still speaks
+END_HOLD_MS = 800  # then a short still at the very end (a 3 s silent freeze made viewers swipe away)
 MISSING = "placeholder:missing"
+# Worn below the waist: the product fills the lower half of almost every frame, so captions go on top.
+LOWER_BODY = ("裤", "裙", "鞋", "袜", "靴")
+
+
+def caption_position(shot_type: str, category: str) -> str:
+    if any(k in (category or "") for k in LOWER_BODY):
+        return "top"
+    return "top" if shot_type in ("look_full", "detail_fit") else "bottom"
 
 
 def split_caption(text: str, duration_ms: int, max_chars: int) -> list[tuple[str, int, int]]:
@@ -54,13 +63,14 @@ def make_timeline(plan: Plan, req: RunRequest, version: int, cue_chars: int = 16
             s = shot.speech
             audio.append(AudioItem(kind=s.kind, asset_id=s.asset_id, in_ms=s.in_ms,
                                    out_ms=min(s.out_ms, s.in_ms + shot.duration_ms), at_ms=at))
-        position = "top" if shot.shot_type in ("look_full", "detail_fit") else "bottom"
+        position = caption_position(shot.shot_type, req.product.category)
         captions += [Caption(start_ms=at + a, end_ms=at + b, text=t, position=position)
                      for t, a, b in split_caption(shot.caption, shot.duration_ms, cue_chars)]
         at += shot.duration_ms
     return Timeline(run_id=plan.run_id, plan_version=plan.version, version=version, video=video, audio=audio,
-                    captions=captions, end_card=EndCard(start_ms=at, end_ms=at + END_CARD_MS,
-                                                        lines=end_card_lines(req.product, req.options.cta)))
+                    captions=captions,
+                    end_card=EndCard(start_ms=max(0, at + END_HOLD_MS - END_CARD_MS), end_ms=at + END_HOLD_MS,
+                                     lines=end_card_lines(req.product, req.options.cta)))
 
 
 def end_card_lines(product: Product, cta: str) -> list[str]:
@@ -114,7 +124,7 @@ def qc(state: RunState, runtime: Runtime[RunContext]) -> dict:
         checks.append(QCCheck(id="qc.missing_footage", severity="fail", fix_by="human",
                               detail=f"镜头 {missing} 没有画面，请选素材或删除"))
     lo, hi = req.options.target_ms
-    if not lo <= m.duration_ms - END_CARD_MS <= hi:
+    if not lo <= m.duration_ms - END_HOLD_MS <= hi:
         checks.append(QCCheck(id="qc.duration", severity="warn", detail=f"{m.duration_ms / 1000:.1f} s"))
     report = QCReport(run_id=req.run_id, timeline_version=timeline.version, measured=m, checks=checks,
                       passed=not any(x.severity == "fail" for x in checks))

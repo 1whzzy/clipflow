@@ -159,7 +159,8 @@ def select_quotes(state: RunState, runtime: Runtime[RunContext]) -> dict:
                          must_mention=req.options.must_mention, opening_connectives=r.opening_connectives,
                          hesitations=r.hesitations, claim_terms=r.claim_terms, min_quote_ms=r.min_quote_ms,
                          max_quotes=r.max_quotes, max_support=r.max_support_points, max_per_point=r.max_per_point,
-                         live_room_phrases=r.live_room_phrases, opening_hedges=r.opening_hedges,
+                         live_room_phrases=r.live_room_phrases, list_markers=r.list_markers,
+                         opening_hedges=r.opening_hedges,
                          max_quote_ms=r.max_quote_ms, deictic=r.deictic),
         rework_notes=rework_notes(ctx, state, "content"),
     )

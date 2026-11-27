@@ -29,7 +29,8 @@ rules:
   # The first sentence must make sense on its own: it may not start with one of these.
   opening_connectives: [而且, 然后, 所以, 但是, 因为, 就是, 还有, 另外, 并且, 包括, 再说, 对, 那, 也是, 它也]
   # Hesitation and filler: a segment containing these is rejected.
-  hesitations: [那个什么, 怎么说呢, 就是那个, 这个那个, 嗯, 呃, 额, 啊这]
+  # (2026-11-27 acceptance run: 「我觉得就是你就是去搭配一些那种…你像这种大派克」 got through.)
+  hesitations: [那个什么, 怎么说呢, 就是那个, 这个那个, 嗯, 呃, 额, 啊这, 我觉得就是, 就是你就是, 你像这种, 那种那种]
   # "Look at this" phrases: allowed only when the picture shows the product at that moment.
   deictic: [你看, 看见了吗, 看到了吗, 给大家看, 看一下, 看这个]
   # Material / craft claims. A segment may only state one if the product file lists it under
@@ -54,6 +55,9 @@ rules:
   max_per_point: 2         # the same selling point in at most two quotes
   # Lines that only make sense inside the live room; a short-video viewer can't act on them.
   live_room_phrases: [上链接, 先上, 上车, 拍一号, 扣1, 扣个1, 扣一, 老客, 下一个, 下一款, 截图, 福袋, 点关注, 直播间, 倒计时, 秒杀, 再开, 加单, 库存]
+  # The anchor's numbering. Cut out of the list, it points at points the viewer never hears
+  # (2026-11-27: 「…它是发糯的这是第一点」).
+  list_markers: [这是第一点, 这是第二点, 这是第三点, 第二点就是, 第三点就是, 第一个就是, 第二个就是]
   caption_cue_chars: 16    # one on-screen caption at most (V1.0: 每句 15 字以内); longer lines are split into several
 
 # Selling-point order by category and price band. From the V1.0 workflow design, node 6 (llm_selling_points).
